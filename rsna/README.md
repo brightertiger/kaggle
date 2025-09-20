@@ -476,13 +476,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 3. [Medical Image Analysis with Deep Learning](https://www.nature.com/articles/s41591-018-0316-z)
 4. [Transfer Learning in Medical Imaging](https://www.nature.com/articles/s41746-019-0132-y)
 
-## 📞 Contact
+## 👨‍💻 Author
 
-For questions, suggestions, or collaboration opportunities, please feel free to reach out:
-
-- **Email**: [your-email@domain.com]
-- **LinkedIn**: [your-linkedin-profile]
-- **GitHub**: [your-github-profile]
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

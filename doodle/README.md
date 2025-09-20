@@ -334,6 +334,12 @@ submission = scorer.generate_submission(test_df, 'submission.csv')
 
 This project is for educational and research purposes. Please ensure compliance with competition rules and dataset usage policies.
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 ---
 
 **Note**: This solution achieved competitive performance in the Quick, Draw! Recognition Challenge through transfer learning, efficient data processing, and robust training pipelines. The codebase has been refactored for clarity, maintainability, and reproducibility, making it suitable for portfolio demonstration and further research in sketch recognition and computer vision applications.

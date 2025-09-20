@@ -1,0 +1,37 @@
+{
+  "name": "kaggle-portfolio",
+  "version": "1.0.0",
+  "description": "Interactive portfolio website showcasing Kaggle competition solutions",
+  "main": "index.html",
+  "scripts": {
+    "start": "python -m http.server 8000",
+    "serve": "python -m http.server 8000",
+    "build": "echo 'No build step required for static site'",
+    "deploy": "echo 'Deployment handled by GitHub Actions'"
+  },
+  "keywords": [
+    "portfolio",
+    "kaggle",
+    "machine-learning",
+    "data-science",
+    "deep-learning",
+    "computer-vision",
+    "nlp"
+  ],
+  "author": {
+    "name": "Ujjwal Singh Rao",
+    "url": "https://linkedin.com/in/brightertiger",
+    "github": "https://github.com/brightertiger"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brightertiger/kaggle.git"
+  },
+  "homepage": "https://brightertiger.github.io/kaggle/",
+  "devDependencies": {},
+  "dependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

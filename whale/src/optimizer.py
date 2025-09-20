@@ -1,11 +1,30 @@
 import math
-import torch 
+import torch
 from torch.optim.optimizer import Optimizer
 
 class AdamW(Optimizer):
-
+    """
+    Implements AdamW algorithm with decoupled weight decay.
+    
+    The original Adam algorithm was proposed in `Adam: A Method for Stochastic Optimization`_.
+    The AdamW variant was proposed in `Decoupled Weight Decay Regularization`_.
+    
+    Args:
+        params (iterable): iterable of parameters to optimize or dicts defining
+            parameter groups
+        lr (float, optional): learning rate (default: 1e-3)
+        betas (Tuple[float, float], optional): coefficients used for computing
+            running averages of gradient and its square (default: (0.9, 0.999))
+        eps (float, optional): term added to the denominator to improve
+            numerical stability (default: 1e-8)
+        weight_decay (float, optional): weight decay coefficient (default: 1e-2)
+        amsgrad (boolean, optional): whether to use the AMSGrad variant of this
+            algorithm from the paper `On the Convergence of Adam and Beyond`_
+            (default: False)
+    """
+    
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0, amsgrad=False):
+                 weight_decay=1e-2, amsgrad=False):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
@@ -14,6 +33,8 @@ class AdamW(Optimizer):
             raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
+        if not 0.0 <= weight_decay:
+            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, amsgrad=amsgrad)
         super(AdamW, self).__init__(params, defaults)
@@ -24,6 +45,12 @@ class AdamW(Optimizer):
             group.setdefault('amsgrad', False)
 
     def step(self, closure=None):
+        """Performs a single optimization step.
+
+        Args:
+            closure (callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
         loss = None
         if closure is not None:
             loss = closure()
@@ -33,8 +60,12 @@ class AdamW(Optimizer):
                 if p.grad is None:
                     continue
                 grad = p.grad.data
+                if grad.is_sparse:
+                    raise RuntimeError('AdamW does not support sparse gradients, please consider SparseAdam instead')
                 amsgrad = group['amsgrad']
+
                 state = self.state[p]
+
                 # State initialization
                 if len(state) == 0:
                     state['step'] = 0
@@ -45,11 +76,14 @@ class AdamW(Optimizer):
                     if amsgrad:
                         # Maintains max of all exp. moving avg. of sq. grad. values
                         state['max_exp_avg_sq'] = torch.zeros_like(p.data)
+
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
                 if amsgrad:
                     max_exp_avg_sq = state['max_exp_avg_sq']
                 beta1, beta2 = group['betas']
+
                 state['step'] += 1
+
                 # Decay the first and second moment running average coefficient
                 exp_avg.mul_(beta1).add_(1 - beta1, grad)
                 exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
@@ -60,8 +94,13 @@ class AdamW(Optimizer):
                     denom = max_exp_avg_sq.sqrt().add_(group['eps'])
                 else:
                     denom = exp_avg_sq.sqrt().add_(group['eps'])
+
                 bias_correction1 = 1 - beta1 ** state['step']
                 bias_correction2 = 1 - beta2 ** state['step']
                 step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1
-                p.data.add_(-step_size, torch.mul(p.data, group['weight_decay']).addcdiv_(1, exp_avg, denom))
+
+                # Decoupled weight decay
+                p.data.mul_(1 - group['lr'] * group['weight_decay'])
+                p.data.addcdiv_(-step_size, exp_avg, denom)
+
         return loss

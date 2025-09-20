@@ -336,12 +336,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Open source contributors for tools and libraries
 - Academic researchers for foundational work in NLP
 
-## 📞 Contact
+## 👨‍💻 Author
 
-- **Author**: Your Name
-- **Email**: your.email@example.com
-- **LinkedIn**: [Your LinkedIn Profile](https://linkedin.com/in/yourprofile)
-- **GitHub**: [Your GitHub Profile](https://github.com/yourusername)
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

@@ -195,6 +195,10 @@ pipeline.create_ensemble()
 
 ## 👨‍💻 Author
 
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 This solution was developed as part of a comprehensive machine learning portfolio, demonstrating expertise in:
 - Deep Learning and Computer Vision
 - Ensemble Methods and Model Stacking

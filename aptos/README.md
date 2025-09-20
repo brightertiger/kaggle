@@ -302,4 +302,12 @@ This project is for educational and research purposes. Please ensure compliance 
 
 ---
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
+---
+
 **Note**: This solution achieved competitive performance in the APTOS 2019 competition through careful data preprocessing, advanced augmentation strategies, and multi-stage training approaches. The codebase has been refactored for clarity, maintainability, and reproducibility.

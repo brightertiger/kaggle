@@ -321,9 +321,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📞 Contact
+## 👨‍💻 Author
 
-For questions or suggestions, please open an issue or contact the maintainer.
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

@@ -226,6 +226,12 @@ predictions = pipeline.predict()
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 ---
 
 *This project demonstrates the successful integration of deep learning with linguistic theory to solve a challenging NLP problem. The approach combines the representational power of pre-trained language models with domain expertise to achieve robust performance on pronoun resolution.*

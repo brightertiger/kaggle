@@ -304,12 +304,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - PyTorch team for the deep learning framework
 - Albumentations team for the augmentation library
 
-## 📞 Contact
+## 👨‍💻 Author
 
-For questions or collaborations, please contact:
-- Email: your.email@example.com
-- LinkedIn: [Your LinkedIn Profile]
-- GitHub: [Your GitHub Profile]
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

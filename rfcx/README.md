@@ -259,6 +259,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Open Source Libraries**: PyTorch, librosa, timm, and others
 - **Research Papers**: Mixup, ResNet, ResNeSt, and related work
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 ---
 
 *This project demonstrates advanced deep learning techniques for audio classification, showcasing expertise in signal processing, computer vision, and ensemble methods.*

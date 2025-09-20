@@ -421,12 +421,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **NVIDIA**: For Apex mixed precision training
 - **PyTorch Team**: For the powerful deep learning framework
 
-## 📞 Contact
+## 👨‍💻 Author
 
-For questions or collaborations, please reach out:
-- **Email**: your.email@example.com
-- **LinkedIn**: [Your LinkedIn Profile]
-- **GitHub**: [Your GitHub Profile]
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

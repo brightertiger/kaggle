@@ -293,6 +293,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Open source contributors for tools and libraries
 - Academic researchers for foundational work in NLP
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 ---
 
 **Note**: This project was developed as part of a data science competition and is intended for educational and research purposes. The models and approaches demonstrated here represent advanced techniques in natural language processing and machine learning.

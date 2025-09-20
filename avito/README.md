@@ -344,6 +344,12 @@ user_predictions = user_model.predict(new_user_data)
 
 This project is for educational and research purposes. Please ensure compliance with competition rules and data usage policies.
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 ---
 
 **Note**: This solution achieved competitive performance in the Avito Demand Prediction Challenge through comprehensive feature engineering, multi-level ensemble architecture, and Russian language-specific text processing. The codebase has been refactored for clarity, maintainability, and reproducibility, making it suitable for portfolio demonstration and further research.

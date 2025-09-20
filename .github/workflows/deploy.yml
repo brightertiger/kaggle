@@ -1,0 +1,66 @@
+name: Deploy Portfolio Website
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies (if any)
+      run: |
+        if [ -f package.json ]; then
+          npm ci
+        fi
+        
+    - name: Build website (if needed)
+      run: |
+        echo "Building static website..."
+        # Add any build steps here if needed
+        
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
+        publish_branch: gh-pages
+        cname: # Add your custom domain here if you have one
+        
+    - name: Deploy to Netlify (Alternative)
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: nwtgck/actions-netlify@v2.0
+      with:
+        publish-dir: './'
+        production-branch: main
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        deploy-message: "Deploy from GitHub Actions"
+        enable-pull-request-comment: false
+        enable-commit-comment: true
+        overwrites-pull-request-comment: true
+      env:
+        NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ Deployment successful!"
+          echo "🌐 Website deployed to GitHub Pages"
+        else
+          echo "❌ Deployment failed!"
+        fi

@@ -365,12 +365,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - The open-source community for excellent ML libraries
 - Fellow competitors for insights and discussions
 
-## 📞 Contact
+## 👨‍💻 Author
 
-**Ujjwal Sharma**
-- GitHub: [@ujjwal-sharma](https://github.com/ujjwal-sharma)
-- LinkedIn: [Ujjwal Sharma](https://linkedin.com/in/ujjwal-sharma)
-- Email: ujjwalsharma@example.com
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

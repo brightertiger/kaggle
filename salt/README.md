@@ -400,13 +400,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 4. [The Lovász-Softmax loss: A tractable surrogate for the optimization of the intersection-over-union measure in neural networks](https://arxiv.org/abs/1705.08790)
 5. [Deep Learning for Seismic Data Analysis](https://www.nature.com/articles/s41598-019-43541-8)
 
-## 📞 Contact
+## 👨‍💻 Author
 
-For questions, suggestions, or collaboration opportunities, please feel free to reach out:
-
-- **Email**: [your-email@domain.com]
-- **LinkedIn**: [your-linkedin-profile]
-- **GitHub**: [your-github-profile]
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
 
 ---
 

@@ -470,6 +470,12 @@ print(f"Generated {len(predictions)} predictions")
 
 This project is for educational and research purposes. Please ensure compliance with competition rules and dataset usage policies.
 
+## 👨‍💻 Author
+
+**Ujjwal Singh Rao**
+- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
+- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
+
 ---
 
 **Note**: This solution addresses critical challenges in automated content moderation by implementing bias-aware training and evaluation methods. The codebase has been refactored for clarity, maintainability, and reproducibility, making it suitable for portfolio demonstration and further research in fair AI and content moderation applications.
