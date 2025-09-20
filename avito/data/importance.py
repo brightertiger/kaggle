@@ -1,5 +1,15 @@
+"""
+Feature importance analysis script for Avito competition.
+
+This script analyzes the importance of different feature types and provides
+insights into model performance and feature contributions.
+Refactored for better organization and maintainability.
+"""
+
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.feature_selection import f_regression
