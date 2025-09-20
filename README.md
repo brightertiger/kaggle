@@ -22,34 +22,38 @@ This repository contains refactored and cleaned implementations of competition s
 
 | Competition | Domain | Medal | Rank | Key Technologies | Description |
 |-------------|--------|-------|------|------------------|-------------|
-| [Jigsaw Multilingual Toxic Comment Classification](jigsawml/) | NLP | 🥇 Gold | #3/1,621 | XLM-RoBERTa, Adversarial Training | Multilingual toxic comment detection with two-stage training |
-| [SIIM-ISIC Melanoma Detection](siim/) | Computer Vision | 🥇 Gold | #6/3,308 | EfficientNet, Metadata Fusion | Medical image analysis for melanoma detection |
-| [TalkingData AdTracking Fraud Detection](talking/) | Fraud Detection | 🥇 Gold | #16/3,943 | LightGBM, Feature Engineering | Large-scale mobile ad fraud detection |
-| [RSNA Intracranial Hemorrhage Detection](rsna/) | Medical Imaging | 🥈 Silver | - | PyTorch, ResNeXt, Multi-window | Multi-label classification of CT scan hemorrhages |
-| [Cassava Leaf Disease Classification](leaf/) | Computer Vision | 🥈 Silver | - | EfficientNet-B4, SWA | Agricultural AI for disease classification |
-| [Whale Identification Challenge](whale/) | Computer Vision | 🥈 Silver | - | Center Loss, Siamese Networks | Fine-grained individual whale identification |
-| [Avito Deal Probability Prediction](avito/) | Ensemble | 🥈 Silver | - | Multi-level Ensemble, TF-IDF | Deal prediction with Russian NLP |
-| [AmExpert Coupon Redemption Prediction](amexpert/) | Business ML | 🥈 Silver | - | LightGBM, Rank Blending | Coupon redemption behavior prediction |
-| [APTOS Diabetic Retinopathy Detection](aptos/) | Medical Imaging | 🥉 Bronze | - | CNN, PyTorch | Retinopathy detection in fundus images |
-| [Jigsaw Toxic Comment Classification](jigsaw/) | NLP | 🥉 Bronze | - | BERT, GPT-2, Bias Detection | Bias-aware toxic comment classification |
-| [Quick, Draw! Recognition](doodle/) | Computer Vision | 🥉 Bronze | - | ResNet, Transfer Learning | Sketch recognition with stroke conversion |
-| [iMet Collection 2019 - FGVC6](imet/) | Computer Vision | 🥉 Bronze | - | EfficientNet, Transfer Learning | Cultural heritage classification |
-| [Tweet Sentiment Analysis](tweet/) | NLP | 📊 Project | - | RoBERTa, Span Extraction | Sentiment-specific text portion identification |
-| [Question Understanding](quest/) | NLP | 📊 Project | - | Dual-BERT, Mixed Precision | Multi-label Q&A quality assessment |
-| [RFCX Species Audio Detection](rfcx/) | Audio Processing | 📊 Project | - | CNN, Spectrogram | Species detection from audio recordings |
-| [Salt Identification](salt/) | Computer Vision | 📊 Project | - | U-Net, Segmentation | Seismic image segmentation for salt detection |
-| [Spooky Author Identification](spooky/) | NLP | 📊 Project | - | Text Classification, Ensemble | Author identification from text samples |
-| [Statoil Iceberg Classifier](statoil/) | Computer Vision | 📊 Project | - | CNN, Satellite Imagery | Iceberg detection from satellite images |
-| [Toxic Comment Classification](toxic/) | NLP | 📊 Project | - | LSTM, CNN, Word Embeddings | Multi-label toxic comment classification |
-| [GAP Pronoun Resolution](pronoun/) | NLP | 📊 Project | - | BERT, Coreference Resolution | Pronoun resolution in text |
+| [Jigsaw Multilingual Toxic Comment Classification](https://www.kaggle.com/competitions/jigsaw-multilingual-toxic-comment-classification) | NLP | 🥇 Gold | #3/1,621 | TPU, Multilingual NLP | Identify toxicity comments across multiple languages |
+| [SIIM-ISIC Melanoma Classification](https://www.kaggle.com/competitions/siim-isic-melanoma-classification) | Computer Vision | 🥇 Gold | #6/3,308 | Deep Learning, Medical Imaging | Identify melanoma in lesion images |
+| [TalkingData AdTracking Fraud Detection](https://www.kaggle.com/competitions/talkingdata-adtracking-fraud-detection) | Fraud Detection | 🥇 Gold | #16/3,943 | Machine Learning, AdTech | Detect fraudulent click traffic for mobile app ads |
+| [Avito Demand Prediction Challenge](https://www.kaggle.com/competitions/avito-demand-prediction-challenge) | Business ML | 🥈 Silver | #21/1,868 | Ensemble, Feature Engineering | Predict demand for online classified ads |
+| [Google QUEST Q&A Labeling](https://www.kaggle.com/competitions/google-quest-challenge) | NLP | 🥈 Silver | #21/1,571 | NLP, Question Answering | Improve automated understanding of complex Q&A content |
+| [Market Basket Analysis](https://www.kaggle.com/competitions/instacart-market-basket-analysis) | Business ML | 🥈 Silver | #22/2,621 | Recommendation Systems | Predict which products consumers will purchase again |
+| [Santa Gift Matching Challenge](https://www.kaggle.com/competitions/santa-gift-matching-challenge) | Optimization | 🥈 Silver | #26/428 | Optimization, Algorithms | Optimize gift matching for Santa's delivery |
+| [Toxic Comment Classification Challenge](https://www.kaggle.com/competitions/jigsaw-toxic-comment-classification-challenge) | NLP | 🥈 Silver | #29/4,539 | NLP, Text Classification | Identify and classify toxic online comments |
+| [SIIM-ACR Pneumothorax Segmentation](https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation) | Medical Imaging | 🥈 Silver | #32/1,475 | Computer Vision, Segmentation | Identify Pneumothorax disease in chest x-rays |
+| [Gendered Pronoun Resolution](https://www.kaggle.com/competitions/gendered-pronoun-resolution) | NLP | 🥈 Silver | #41/838 | NLP, Coreference Resolution | Pair pronouns to their correct entities |
+| [Santa's Workshop Tour 2019](https://www.kaggle.com/competitions/santa-workshop-tour-2019) | Optimization | 🥈 Silver | #44/1,618 | Optimization, Algorithms | Optimize Santa's workshop tour route |
+| [RSNA Intracranial Hemorrhage Detection](https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection) | Medical Imaging | 🥈 Silver | #58/1,345 | Computer Vision, Medical AI | Identify acute intracranial hemorrhage and subtypes |
+| [APTOS 2019 Blindness Detection](https://www.kaggle.com/competitions/aptos2019-blindness-detection) | Medical Imaging | 🥈 Silver | #75/2,928 | Computer Vision, Medical AI | Detect diabetic retinopathy to prevent blindness |
+| [CommonLit Readability Prize](https://www.kaggle.com/competitions/commonlitreadabilityprize) | NLP | 🥈 Silver | #91/3,633 | NLP, Text Analysis | Rate complexity of literary passages for classroom use |
+| [Jigsaw Unintended Bias in Toxicity Classification](https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification) | NLP | 🥈 Silver | #146/3,165 | NLP, Bias Detection | Detect toxicity across diverse conversations |
+| [iMet Collection 2019 - FGVC6](https://www.kaggle.com/competitions/imet-2019-fgvc6) | Computer Vision | 🥉 Bronze | #61/521 | Computer Vision, Cultural Heritage | Recognize artwork attributes from The Met Museum |
+| [Rainforest Connection Species Audio Detection](https://www.kaggle.com/competitions/rfcx-species-audio-detection) | Audio Processing | 🥉 Bronze | #78/1,143 | Audio Processing, CNN | Automate detection of bird and frog species |
+| [Tweet Sentiment Extraction](https://www.kaggle.com/competitions/tweet-sentiment-extraction) | NLP | 🥉 Bronze | #208/2,225 | NLP, Sentiment Analysis | Extract support phrases for sentiment labels |
+| [TGS Salt Identification Challenge](https://www.kaggle.com/competitions/tgs-salt-identification-challenge) | Computer Vision | 🥉 Bronze | #292/3,219 | Computer Vision, Segmentation | Segment salt deposits beneath Earth's surface |
+| [Quick, Draw! Doodle Recognition Challenge](https://www.kaggle.com/competitions/quickdraw-doodle-recognition) | Computer Vision | 📊 Project | #138/1,309 | Computer Vision, Sketch Recognition | Identify doodles accurately |
+| [Humpback Whale Identification](https://www.kaggle.com/competitions/humpback-whale-identification) | Computer Vision | 📊 Project | #284/2,120 | Computer Vision, Fine-grained Classification | Identify whales by their tail patterns |
+| [Cassava Leaf Disease Classification](https://www.kaggle.com/competitions/cassava-leaf-disease-classification) | Computer Vision | 📊 Project | #589/3,900 | Computer Vision, Agriculture | Identify disease types on Cassava Leaf images |
 
 ### Competition Statistics
-- **Total Competitions**: 20
+- **Total Competitions**: 22
 - **Gold Medals**: 3 🥇
-- **Silver Medals**: 5 🥈  
+- **Silver Medals**: 12 🥈  
 - **Bronze Medals**: 4 🥉
-- **Additional Projects**: 8 📊
-- **Domains Covered**: Computer Vision, NLP, Medical Imaging, Fraud Detection, Audio Processing, Business ML
+- **Additional Projects**: 3 📊
+- **Overall Rank**: #4,165 of 202,008 Kagglers
+- **Highest Rank**: #3 (Jigsaw Multilingual)
+- **Domains Covered**: Computer Vision, NLP, Medical Imaging, Fraud Detection, Audio Processing, Business ML, Optimization
 
 ## Projects
 
