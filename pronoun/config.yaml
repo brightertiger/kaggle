@@ -1,0 +1,18 @@
+model:
+  pretrained_model: "bert-large-uncased"
+  hidden_size: 1024
+  dropout: 0.2
+  learning_rate: 1e-3
+  weight_decay: 0.01
+  epochs: 5
+  batch_size: 20
+  max_length: 500
+
+data:
+  train_path: "data/gap-test.tsv"
+  val_path: "data/gap-validation.tsv"
+  test_path: "data/gap-development.tsv"
+  output_dir: "outputs"
+  n_folds: 5
+
+device: "cuda:0"
