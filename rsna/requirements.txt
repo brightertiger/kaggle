@@ -1,0 +1,18 @@
+torch>=1.8.0
+torchvision>=0.9.0
+numpy>=1.19.0
+pandas>=1.2.0
+scikit-learn>=0.24.0
+pydicom>=2.2.0
+albumentations>=1.0.0
+tqdm>=4.60.0
+opencv-python>=4.5.0
+matplotlib>=3.3.0
+seaborn>=0.11.0
+jupyter>=1.0.0
+ipywidgets>=7.6.0
+
+# Optional but recommended
+apex>=0.1.0  # For mixed precision training
+efficientnet-pytorch>=0.7.0  # For EfficientNet models
+pretrainedmodels>=0.7.4  # For ResNext models
