@@ -16,9 +16,12 @@ Usage:
 
 import argparse
 import sys
+import os
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import Config
 from src.pipeline import TalkingDataPipeline

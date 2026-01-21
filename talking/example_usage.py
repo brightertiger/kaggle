@@ -7,11 +7,15 @@ This script demonstrates various ways to use the pipeline for different tasks
 including data preprocessing, model training, prediction generation, and evaluation.
 """
 
+import sys
+import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import Config
 from src.pipeline import TalkingDataPipeline

@@ -1,4 +1,9 @@
+import sys
+import os
 import torch
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.config import Config
 from src.pipeline import PronounResolutionPipeline
 

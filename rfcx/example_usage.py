@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.config import Config
 from src.pipeline import run_full_pipeline, create_folds, resample_audio, ensemble_predictions
 from src.trainer import train_model

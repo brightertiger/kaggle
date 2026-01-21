@@ -1,5 +1,10 @@
 import argparse
+import sys
+import os
 import torch
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.pipeline import JigsawPipeline
 from src.utils.config import Config
 

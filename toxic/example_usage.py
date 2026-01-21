@@ -3,8 +3,12 @@
 Example usage of the Toxic Comment Classification Pipeline
 """
 
+import sys
 import os
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.config import get_config
 from src.pipeline import ToxicCommentPipeline
 from src.data_utils import DataProcessor, TextPreprocessor

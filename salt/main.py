@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
+import sys
+import os
 import torch
 import pandas as pd
 import argparse
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import Config
 from src.pipeline import SaltSegmentationPipeline

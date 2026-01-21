@@ -5,6 +5,8 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.config import get_config
 from src.pipeline import TweetSentimentPipeline
 

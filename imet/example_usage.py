@@ -6,6 +6,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.config import Config
 from src.pipeline import IMetPipeline
 from src.data_utils import DataPreprocessor, create_data_loaders

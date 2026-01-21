@@ -5,10 +5,14 @@ Example usage script for Salt Identification from Aerial Images project.
 This script demonstrates various ways to use the pipeline for different tasks.
 """
 
+import sys
+import os
 import torch
 import pandas as pd
 from pathlib import Path
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import Config
 from src.pipeline import SaltSegmentationPipeline

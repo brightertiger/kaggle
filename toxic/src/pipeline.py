@@ -4,10 +4,10 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from multiprocessing import Pool
 from functools import reduce
-from src.config import Config
-from src.data_utils import DataProcessor, TextPreprocessor
-from src.models import NeuralNetworkModel, NaiveBayesSVM, LogisticRegressionModel
-from src.ensemble import EnsembleModel, ModelEvaluator
+from .config import Config
+from .data_utils import DataProcessor, TextPreprocessor
+from .models import NeuralNetworkModel, NaiveBayesSVM, LogisticRegressionModel
+from .ensemble import EnsembleModel, ModelEvaluator
 
 
 class ToxicCommentPipeline:

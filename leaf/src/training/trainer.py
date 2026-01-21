@@ -6,7 +6,7 @@ from tqdm import tqdm
 from torch.autograd import Variable
 from collections import OrderedDict
 from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
-from src.utils.config import Config
+from ..utils.config import Config
 
 def reduce_metric(label_array, pred_array):
     label_array = label_array.reshape(-1, 1)

@@ -5,6 +5,11 @@ This script demonstrates how to use the refactored pipeline for
 training models and generating predictions.
 """
 
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.pipeline import IcebergPipeline
 from src.models import CNNBasic, CNNAdvanced, VGG16Model
 from src.data_utils import DataProcessor

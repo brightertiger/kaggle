@@ -7,10 +7,14 @@ This script demonstrates how to:
 3. Make predictions on new images
 """
 
+import sys
+import os
 import torch
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.config import Config
 from src.data_utils import DiabeticRetinopathyDataset, ImageTransforms

@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 
+import sys
+import os
 import pandas as pd
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.config import Config
 from src.pipeline import DoodlePipeline
 from src.trainer import ModelTrainer

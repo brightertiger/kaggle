@@ -1,7 +1,7 @@
 import timm
 import torch
 import torch.nn as nn
-from src.utils.config import Config
+from ..utils.config import Config
 
 class EfficientNetModel(nn.Module):
     def __init__(self, model_name=Config.MODEL_NAME, num_classes=Config.NUM_CLASSES, pretrained=True):

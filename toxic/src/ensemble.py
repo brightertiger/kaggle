@@ -3,7 +3,7 @@ import numpy as np
 from typing import List, Dict, Tuple
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_curve, auc
-from src.config import Config
+from .config import Config
 
 
 class EnsembleModel:

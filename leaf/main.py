@@ -1,4 +1,9 @@
 import argparse
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 import torch
 from src.pipeline import CassavaPipeline
 from src.utils.config import Config

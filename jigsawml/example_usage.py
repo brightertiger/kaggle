@@ -1,4 +1,9 @@
+import sys
+import os
 import torch
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.pipeline import JigsawPipeline
 
 def example_data_preparation():

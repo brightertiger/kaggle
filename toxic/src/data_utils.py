@@ -5,7 +5,7 @@ import string
 import nltk
 from typing import List, Tuple, Optional
 from sklearn.model_selection import KFold
-from src.config import Config
+from .config import Config
 
 
 class TextPreprocessor:

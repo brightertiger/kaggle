@@ -15,7 +15,7 @@ from keras.optimizers import Adam
 from keras import backend as K
 from keras.utils import get_custom_objects
 from keras.preprocessing import text, sequence
-from src.config import Config
+from .config import Config
 
 
 class NeuralNetworkModel:

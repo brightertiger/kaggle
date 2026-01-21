@@ -6,16 +6,16 @@ import pandas as pd
 import numpy as np
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from src.data.data_utils import create_data_loaders, CassavaDataset
+from .data.data_utils import create_data_loaders, CassavaDataset
 from torch.utils.data import DataLoader
-from src.data.data_preprocessing import prepare_data, analyze_data
-from src.models.models import EfficientNetModel
-from src.models.loss import CELoss
-from src.training.trainer import train_model
-from src.training.inference import predict
-from src.training.scoring import evaluate_model_performance
-from src.utils.config import Config
-from src.utils.ensemble import ModelEnsemble
+from .data.data_preprocessing import prepare_data, analyze_data
+from .models.models import EfficientNetModel
+from .models.loss import CELoss
+from .training.trainer import train_model
+from .training.inference import predict
+from .training.scoring import evaluate_model_performance
+from .utils.config import Config
+from .utils.ensemble import ModelEnsemble
 
 class CassavaPipeline:
     def __init__(self):

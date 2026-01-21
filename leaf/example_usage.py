@@ -1,4 +1,9 @@
+import sys
+import os
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from src.pipeline import CassavaPipeline
 
 def main():

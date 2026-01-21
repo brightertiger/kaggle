@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from tqdm import tqdm
-from src.utils.config import Config
+from ..utils.config import Config
 
 def predict(model, data_loader, device=Config.DEVICE):
     model.eval()
