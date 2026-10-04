@@ -61,7 +61,7 @@ This repository contains refactored and cleaned implementations of competition s
 | Statoil Iceberg Classifier Challenge | — | — | CNN, VGG16, XGBoost | [Folder](./statoil/) · [Write-up](https://brightertiger.github.io/kaggle/statoil/) |
 | Whale Identification Challenge | — | — | ResNet50, Center Loss, Siamese Networks | [Folder](./whale/) · [Write-up](https://brightertiger.github.io/kaggle/whale/) |
 
-Ranks and team counts marked — are not documented. Competition-only entries have no solution folder in this repository.
+Ranks and team counts marked — are not documented.
 
 ## Competition Statistics
 
@@ -80,7 +80,6 @@ Ranks and team counts marked — are not documented. Competition-only entries ha
 - **NLP**: Toxicity detection, sentiment analysis, Q&A, coreference resolution
 - **Computer Vision**: Medical imaging, segmentation, classification
 - **Audio Processing**: Species detection, spectrograms
-- **Optimization**: Combinatorial optimization, constraint satisfaction
 - **Fraud Detection**: Click fraud, ad tracking
 - **Recommendation Systems**: Market basket analysis
 
