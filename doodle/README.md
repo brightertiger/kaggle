@@ -1,345 +1,225 @@
-# Quick, Draw! Recognition Challenge
+# [Quick, Draw! Doodle Recognition Challenge](https://www.kaggle.com/competitions/quickdraw-doodle-recognition)
 
-A comprehensive deep learning solution for the [Quick, Draw! Recognition Challenge](https://www.kaggle.com/c/quickdraw-doodle-recognition), which aims to classify hand-drawn sketches into 340 different categories using computer vision and neural networks.
+**Final rank: #138 / 1,309 teams · Medal: not listed in the portfolio table.**
 
-## 🏆 Competition Overview
+I approached sketch recognition by turning pen strokes into grayscale images
+and fine-tuning a ResNet classifier. This folder preserves that raster-based
+method and provides a runnable version of the migrated training pipeline.
+The rank comes from the [portfolio README](../README.md); the synthetic run
+below checks execution, not the historical leaderboard result.
 
-**Challenge**: Classify hand-drawn sketches from the Quick, Draw! dataset into 340 categories
-- **Target**: Multi-class classification (340 classes)
-- **Evaluation Metric**: Top-3 Accuracy (Categorical Accuracy)
-- **Dataset**: ~50M hand-drawn sketches across 340 categories
-- **Domain**: Computer Vision, Sketch Recognition, Transfer Learning
+## Problem
 
-**Business Impact**: Understanding sketch recognition has applications in user interface design, creative tools, accessibility features, and human-computer interaction systems.
+The task was to predict the object represented by a hand-drawn doodle across
+340 categories. A submission ranks the most likely labels for each drawing.
 
-## 🚀 Key Features
+The competition metric was **MAP@3**, which rewards a correct label more when
+it appears earlier in the ranked predictions. The competition also required
+underscores inside multiword labels. See the [official evaluation](https://www.kaggle.com/competitions/quickdraw-doodle-recognition/overview/evaluation).
 
-- **Transfer Learning Architecture**: Pre-trained ResNet models (18, 34, 50) with custom classification heads
-- **Advanced Data Processing**: Stroke-based sketch rendering with data augmentation
-- **Multi-Scale Training**: Configurable image sizes and batch processing
-- **Robust Evaluation**: Top-K accuracy metrics with comprehensive logging
-- **Production-Ready Pipeline**: Modular design with CLI interface and programmatic API
-- **GPU Acceleration**: Multi-GPU support with efficient memory management
+Sketches are sparse and ambiguous: the same outline can suggest several objects,
+and drawing styles vary substantially. The game-generated training drawings can
+be incomplete or mislabeled, while the manually labeled test set has a different
+distribution. That limits what an ordinary random holdout can tell me about
+leaderboard performance. See the [competition description](https://www.kaggle.com/competitions/quickdraw-doodle-recognition).
 
-## 📁 Project Structure
+## Data
 
+I use the competition's **simplified stroke CSVs**, with a separate training file
+for each category and a combined `test_simplified.csv` for prediction.
+
+- Training columns include `key_id`, `drawing`, `word`, `recognized`,
+  `countrycode`, and `timestamp`.
+- Test inputs need `key_id` and `drawing`; additional metadata is ignored.
+- `drawing` contains a serialized list of strokes. Each stroke holds parallel
+  x-coordinate and y-coordinate lists.
+- `word` is the training label, including spaces in multiword category names.
+- I preserve `key_id` as text throughout loading and submission writing.
+
+The model uses only the rendered strokes. It does not use country, timestamp,
+or the game's `recognized` flag as features or filter training rows by that flag.
+The stratified split preserves the observed class proportions rather than
+rebalancing them. There is no user-group or duplicate-aware split in this code.
+
+## Approach
+
+### Validation and class mapping
+
+I use a stratified shuffle split with a default training fraction of 0.9 and
+random seed 2017. The category vocabulary comes from the actual `word` values,
+is sorted once, and is saved alongside the prepared data.
+
+The trainer derives its output size from that vocabulary. Checkpoints also store
+the label order, architecture, and rendering size, so inference can detect a
+mismatched label mapping and reuse the training resolution.
+
+The retained trainer selects checkpoints using **top-3 accuracy**, expressed as a
+percentage. This is an unweighted hit rate and is distinct from MAP@3.
+I keep that original selection behavior explicit instead of presenting its logs
+as competition scores. Losses and accuracy are aggregated by sample count.
+
+### Stroke rendering and features
+
+I rasterize every drawing onto a black 256 × 256 canvas with OpenCV.
+Stroke width is 6 pixels. Earlier strokes are brighter; intensity follows
+`255 - min(stroke_index, 10) * 13`. This gives the image a limited encoding of
+stroke order while retaining its spatial geometry.
+
+The canvas is resized to 64 × 64 by default and scaled into the unit interval.
+Training adds a horizontal flip with probability 0.5; validation and inference
+use deterministic rendering. Features are learned by the CNN rather than
+computed as a separate tabular representation.
+
+### Network and optimization
+
+I expand the grayscale tensor across the RGB channels expected by ResNet.
+The available backbones are ResNet18, ResNet34, and ResNet50; ResNet50 is the
+default. Adaptive average pooling feeds a linear classifier over the vocabulary.
+
+Production training initializes from ImageNet weights and fine-tunes the network
+with cross-entropy and Adam. The defaults are learning rate 0.001, weight decay
+`1e-4`, and 50 epochs. The code retains its unit-interval input scaling rather
+than adding a new ImageNet normalization policy during this repair.
+
+After 5 epochs without a better validation hit rate, I halve the learning rate.
+Training stops if the rate falls below `1e-7`, or when the epoch budget ends.
+The first validation result always produces a checkpoint, even if accuracy is zero.
+CUDA and multiple GPUs are supported; CPU execution follows the same model path.
+
+```mermaid
+flowchart LR
+    A[Per-category stroke CSVs] --> B[Stratified train / validation split]
+    B --> C[Stroke-order grayscale raster]
+    C --> D[Resize and scale; training flips]
+    D --> E[ResNet and linear classifier]
+    E --> F[Cross-entropy / Adam]
+    F --> G[Best validation checkpoint]
+    H[Test stroke CSV] --> I[Same deterministic rasterizer]
+    I --> J[Reload checkpoint and predict]
+    G --> J
+    J --> K[Rank probabilities and write submission]
 ```
+
+### Prediction and post-processing
+
+I apply softmax to the saved model's logits, rank category probabilities, and
+write `key_id,word` with the highest-ranked labels separated by spaces.
+Spaces within a category become underscores. Input row order is retained.
+Loading a trained checkpoint never requests pretrained weights.
+
+This folder implements single-model prediction. The surviving code does not
+contain an ensemble, test-time augmentation, mixed precision, or gradient
+accumulation, so I do not claim those as parts of this implementation.
+
+## What mattered most
+
+The surviving files do not include controlled ablations. These are the central
+ideas in the implementation, rather than claims of measured score gains:
+
+- **Representation:** rasterization lets a conventional CNN learn sketch shapes.
+- **Stroke order:** intensity carries a little temporal information into the image.
+- **Transfer learning:** ImageNet initialization supplies the starting CNN features.
+- **Validation discipline:** stratification and checkpointing support repeatable comparisons.
+- **Submission integrity:** class order, intact IDs, and label formatting are part
+  of the prediction pipeline, not incidental export details.
+
+## Repository layout
+
+```text
 doodle/
-├── main.py              # Main entry point with CLI interface
-├── example_usage.py     # Usage demonstrations and examples
-├── requirements.txt     # Python dependencies
-├── README.md           # This file
-├── src/                # Source code package
-│   ├── __init__.py     # Package initialization
-│   ├── config.py       # Centralized configuration management
-│   ├── data_utils.py   # Dataset classes and data loading utilities
-│   ├── models.py       # Neural network architectures and metrics
-│   ├── trainer.py      # Training pipeline and optimization
-│   ├── scorer.py       # Inference and prediction generation
-│   └── pipeline.py     # End-to-end pipeline orchestration
-├── models/             # Original model scripts (preserved)
-├── dataloader/         # Original dataloader scripts (preserved)
-└── metrics/            # Original metric scripts (preserved)
+├── README.md             # Solution narrative and runnable commands
+├── main.py               # CLI for preprocessing, training, prediction, or all stages
+├── example_usage.py      # Configurable programmatic pipeline example
+├── dry_run.py            # Synthetic competition-schema data and CPU integration checks
+├── requirements.txt      # Direct Python dependencies
+├── .gitignore            # Local data, checkpoints, and cache exclusions
+└── src/
+    ├── __init__.py        # Public pipeline, dataset, trainer, and scorer exports
+    ├── config.py          # Paths, training defaults, and offline initialization flag
+    ├── data_utils.py      # Stroke rendering, augmentation, and data loaders
+    ├── models.py          # ResNet classifiers and top-k accuracy
+    ├── pipeline.py        # Vocabulary, stratified split, and stage orchestration
+    ├── trainer.py         # Optimization, validation, scheduling, and checkpoints
+    └── scorer.py          # Checkpoint loading, probabilities, and submission formatting
 ```
 
-## 🛠️ Installation
+## How to run
 
-1. **Clone the repository**:
+Use Python 3.11 or newer, from this directory:
+
 ```bash
-git clone <repository-url>
-cd doodle
+python -m pip install -r requirements.txt
 ```
 
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
+### Real competition data
 
-3. **Prepare data**:
-   - Download Quick, Draw! dataset from Kaggle
-   - Place files in `../data/download/` directory with category CSV files
-   - Ensure test data is available at `../data/test/test_simplified.csv`
+Download and extract the simplified competition files into this layout:
 
-## 📊 Data Preparation
-
-### Dataset Structure
-```
+```text
 data/
-├── download/            # Source category CSV files
+├── train_simplified/
 │   ├── airplane.csv
 │   ├── apple.csv
-│   └── ... (340 categories)
-├── train/               # Training data
-│   └── train.csv
-├── valid/               # Validation data
-│   └── valid.csv
-├── test/                # Test data
-│   └── test_simplified.csv
-├── model/               # Trained model checkpoints
-├── score/               # Prediction outputs
-└── submit/              # Final submissions
+│   └── ... category CSVs
+└── test_simplified.csv
 ```
 
-### Data Processing Pipeline
+Run the full pipeline with explicit paths:
+
 ```bash
-python main.py --step preprocess
+python main.py --step all --model resnet50 \
+  --source-data data/train_simplified --test-data data/test_simplified.csv \
+  --data-dir data --epochs 50 --batch-size 32 --num-workers 0
 ```
 
-This creates stratified train/validation splits while preserving category distributions.
+Pretrained training may download torchvision's ImageNet weights on first use.
+Use `--no-pretrained --device cpu` for random initialization without that download.
+`--image-size`, `--lr`, `--train-ratio`, and `--seed` expose the relevant settings.
+For programmatic use, construct `Config(data_path=...)` before creating the pipeline.
 
-## 🎨 Sketch Processing
+Preprocessing currently concatenates the selected CSV rows in memory. For a
+bounded local experiment, set `--max-samples-per-class`; this reads a prefix of
+each file, not a random sample. An unrestricted run requires enough RAM for the
+selected dataset. The CPU demonstration below is the verified execution path;
+full-data training and historical leaderboard reproduction have not been rerun.
 
-### Stroke-to-Image Conversion
-The solution converts stroke-based drawing data into rasterized images:
+Stages can also run separately against the same `--data-dir`:
 
-1. **Stroke Rendering**: Converts vector strokes to pixel-based images
-2. **Color Encoding**: Different strokes have varying intensities for temporal information
-3. **Image Resizing**: Standardizes to configurable dimensions (default: 64x64)
-4. **Data Augmentation**: Horizontal flipping for training robustness
-
-### Technical Implementation
-```python
-def _drawing_to_image(self, drawing_data: str) -> np.ndarray:
-    drawing = literal_eval(drawing_data)
-    image = np.zeros((256, 256), dtype=np.uint8)
-    
-    for stroke_idx, stroke in enumerate(drawing):
-        stroke_color = 255 - min(stroke_idx, 10) * 13
-        
-        for point_idx in range(len(stroke[0]) - 1):
-            x1, y1 = stroke[0][point_idx], stroke[1][point_idx]
-            x2, y2 = stroke[0][point_idx + 1], stroke[1][point_idx + 1]
-            cv2.line(image, (x1, y1), (x2, y2), stroke_color, 6)
-    
-    return processed_image
-```
-
-## 🧠 Model Architecture
-
-### Transfer Learning Approach
-- **Backbone**: Pre-trained ResNet models (ImageNet weights)
-- **Custom Head**: Classification layer adapted for 340 categories
-- **Architecture Variants**: ResNet18, ResNet34, ResNet50
-
-### Model Configuration
-```python
-# ResNet50 Configuration
-class ResNetClassifier(nn.Module):
-    def __init__(self, model_name='resnet50', num_classes=340):
-        self.backbone = models.resnet50(pretrained=True)
-        self.avgpool = nn.AdaptiveAvgPool2d(output_size=1)
-        self.fc = nn.Linear(2048, num_classes)
-```
-
-### Key Architectural Decisions
-1. **Transfer Learning**: Leverages ImageNet pre-trained features
-2. **Adaptive Pooling**: Global average pooling for spatial invariance
-3. **Multi-GPU Support**: DataParallel for efficient training
-4. **Gradient Optimization**: Adam optimizer with learning rate scheduling
-
-## 🎯 Training Pipeline
-
-### Phase 1: Data Preparation
-- Stroke data parsing and validation
-- Stratified train/validation splitting
-- Category mapping and indexing
-
-### Phase 2: Model Training
-- Transfer learning initialization
-- Progressive learning rate scheduling
-- Early stopping with patience mechanism
-- Comprehensive logging and checkpointing
-
-### Phase 3: Evaluation & Inference
-- Top-K accuracy evaluation
-- Batch prediction generation
-- Submission file creation
-
-### Training Configuration
-```python
-# Training Parameters
-BATCH_SIZE = 650
-LEARNING_RATE = 0.001
-EPOCHS = 50
-PATIENCE = 5
-WEIGHT_DECAY = 1e-4
-```
-
-## 🔧 Advanced Features
-
-### Learning Rate Scheduling
-- **Adaptive Reduction**: LR halved when validation metric plateaus
-- **Early Stopping**: Training termination for overfitting prevention
-- **Minimum LR Threshold**: Prevents excessive LR reduction
-
-### Data Augmentation
-- **Horizontal Flipping**: 50% probability during training
-- **Stroke Color Variation**: Temporal information preservation
-- **Image Normalization**: Consistent preprocessing pipeline
-
-### Memory Optimization
-- **Efficient Data Loading**: Multi-worker parallel processing
-- **Gradient Accumulation**: Large effective batch sizes
-- **Mixed Precision**: Optional FP16 training support
-
-## 📈 Results
-
-### Model Performance Comparison
-| Model | Parameters | Top-3 Accuracy | Training Time |
-|-------|------------|----------------|---------------|
-| ResNet18 | 11.7M | ~85-87% | ~2 hours |
-| ResNet34 | 21.8M | ~86-88% | ~3 hours |
-| ResNet50 | 25.6M | ~87-89% | ~4 hours |
-
-### Key Insights
-1. **Transfer Learning Effectiveness**: Pre-trained features significantly improve performance
-2. **Architecture Scaling**: Larger models show consistent improvements
-3. **Data Augmentation Impact**: Horizontal flipping provides measurable benefits
-4. **Batch Size Optimization**: Larger batches improve training stability
-
-### Training Metrics
-- **Convergence**: Models typically converge within 20-30 epochs
-- **Validation Stability**: Consistent performance across different random seeds
-- **Memory Efficiency**: Optimized for single-GPU training with 8GB+ VRAM
-
-## 🚀 Usage
-
-### Quick Start
 ```bash
-# 1. Run complete pipeline
-python main.py --step all --model resnet50
-
-# 2. Or run individual steps
-python main.py --step preprocess    # Data preparation
-python main.py --step train         # Model training
-python main.py --step predict       # Generate predictions
+python main.py --step preprocess --source-data data/train_simplified --data-dir data
+python main.py --step train --model resnet18 --data-dir data --batch-size 32
+python main.py --step predict --model resnet18 --data-dir data \
+  --test-data data/test_simplified.csv
 ```
 
-### Custom Configuration
+Prepared splits and `categories.pkl` are saved under `data/`.
+Checkpoints and training logs go under `data/model/<model>/`.
+The final submission is `data/submit/<model>_submission.csv`.
+Keep the vocabulary and matching checkpoint together when moving artifacts.
+
+### Synthetic dry run
+
 ```bash
-# Custom training parameters
-python main.py --step all \
-    --model resnet34 \
-    --lr 0.0005 \
-    --epochs 30 \
-    --batch-size 512
+python dry_run.py
 ```
 
-### Programmatic Usage
-```python
-from src.config import Config
-from src.pipeline import DoodlePipeline
+This creates category CSVs, test data, and a sample submission under
+`sample_data/`. It trains a randomly initialized ResNet18 for a single epoch
+on CPU at reduced resolution, reloads the checkpoint, predicts, and writes
+`dry_run_output/submit/resnet18_submission.csv`.
 
-# Initialize pipeline
-config = Config()
-config.epochs = 30
-config.batch_size = 512
+The run checks rendered tensor shape, disjoint splits, class coverage, ID
+preservation, ranked-label formatting, and checkpoint creation. It blocks weight
+downloads and skips no pipeline stages. Generated data and outputs are ignored.
+The printed success message indicates a working pipeline, not model quality.
 
-pipeline = DoodlePipeline(config)
+## Lessons / what I'd do differently
 
-# Run specific steps
-train_df, valid_df = pipeline.preprocess_data('../data/download')
-results = pipeline.train_model(train_df, valid_df, 'resnet50')
-```
-
-### Model Inference
-```python
-from src.scorer import ModelScorer
-
-# Load trained model
-scorer = ModelScorer(
-    config=config,
-    model_path='../data/model/resnet50/resnet50_best.pth',
-    model_name='resnet50'
-)
-
-# Generate predictions
-test_df = pd.read_csv('../data/test/test_simplified.csv')
-submission = scorer.generate_submission(test_df, 'submission.csv')
-```
-
-## 🔬 Technical Details
-
-### Cross-Validation Strategy
-- **Stratified Splits**: Maintains category distribution across train/validation
-- **Random State**: 2017 for reproducible results
-- **Split Ratio**: 90% training, 10% validation
-
-### Optimization Strategy
-- **Adam Optimizer**: Adaptive learning rates with momentum
-- **Weight Decay**: L2 regularization for generalization
-- **Learning Rate Scheduling**: Adaptive reduction based on validation performance
-
-### Hardware Requirements
-- **GPU**: CUDA-compatible GPU with 8GB+ VRAM recommended
-- **RAM**: 16GB+ system memory for large batch processing
-- **Storage**: 20GB+ for dataset and model checkpoints
-- **CPU**: Multi-core recommended for data loading
-
-### Performance Optimization
-- **Data Loading**: Multi-worker parallel data loading
-- **Memory Management**: Efficient tensor operations and cleanup
-- **Batch Processing**: Optimized batch sizes for GPU utilization
-
-## 📚 Key Learnings
-
-1. **Transfer Learning Dominance**: Pre-trained ImageNet features provide excellent foundation for sketch recognition
-2. **Data Representation**: Stroke-to-image conversion preserves temporal and spatial information effectively
-3. **Architecture Scaling**: Larger ResNet models show consistent performance improvements
-4. **Augmentation Impact**: Simple horizontal flipping provides measurable benefits
-5. **Training Stability**: Learning rate scheduling and early stopping crucial for convergence
-
-## 🎯 Business Applications
-
-### Creative Tools
-- **Sketch Recognition**: Real-time drawing classification in creative applications
-- **User Interface**: Gesture recognition and sketch-based interfaces
-- **Content Creation**: Automated tagging and categorization of user drawings
-
-### Accessibility
-- **Communication Aids**: Sketch-to-text conversion for communication
-- **Educational Tools**: Interactive learning through drawing recognition
-- **Assistive Technology**: Alternative input methods for users with disabilities
-
-### Research Applications
-- **Human-Computer Interaction**: Understanding drawing patterns and behaviors
-- **Computer Vision**: Foundation models for sketch-based applications
-- **Machine Learning**: Transfer learning and few-shot learning research
-
-## 🎯 Future Improvements
-
-### Model Enhancements
-- **Vision Transformers**: ViT-based architectures for sketch recognition
-- **Attention Mechanisms**: Spatial and temporal attention for better feature learning
-- **Ensemble Methods**: Multi-model combination for improved accuracy
-
-### Data Processing
-- **Advanced Augmentation**: Rotation, scaling, and noise injection
-- **Multi-Scale Training**: Different resolution training for robustness
-- **Temporal Modeling**: RNN-based stroke sequence processing
-
-### Training Optimization
-- **Mixed Precision**: FP16 training for memory efficiency
-- **Distributed Training**: Multi-GPU and multi-node training
-- **AutoML**: Automated hyperparameter optimization
-
-## 📖 References
-
-- [Quick, Draw! Recognition Challenge](https://www.kaggle.com/c/quickdraw-doodle-recognition)
-- [Quick, Draw! Dataset](https://github.com/googlecreativelab/quickdraw-dataset)
-- [ResNet Paper](https://arxiv.org/abs/1512.03385)
-- [Transfer Learning for Computer Vision](https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html)
-
-## 📄 License
-
-This project is for educational and research purposes. Please ensure compliance with competition rules and dataset usage policies.
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This solution achieved competitive performance in the Quick, Draw! Recognition Challenge through transfer learning, efficient data processing, and robust training pipelines. The codebase has been refactored for clarity, maintainability, and reproducibility, making it suitable for portfolio demonstration and further research in sketch recognition and computer vision applications.
+- I would select checkpoints with MAP@3 directly and retain top-3 accuracy as a
+  diagnostic, so model selection matches the competition objective.
+- I would examine near-duplicate drawings and validation distribution shift
+  before treating a stronger random-holdout result as a leaderboard improvement.
+- I would stream or shard the category files for full-scale training instead
+  of materializing the entire selected dataset in memory.
+- I would preserve experiment configs, ablations, and final checkpoint provenance
+  alongside the source so historical performance claims are independently auditable.

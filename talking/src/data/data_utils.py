@@ -1,9 +1,6 @@
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import warnings
-warnings.filterwarnings('ignore')
+from typing import Dict, Tuple
 
 class TalkingDataProcessor:
     """Main data processor for TalkingData AdTracking dataset."""
@@ -52,7 +49,7 @@ class TalkingDataProcessor:
         data['keep_hour'] = data['hour'].isin(self.config.KEEP_HOURS)
         
         # Combine filters
-        data['keep'] = data['keep_row'] + data['keep_hour']
+        data['keep'] = data['keep_row'] | data['keep_hour']
         data = data[data['keep'] > 0]
         
         return data
@@ -61,9 +58,13 @@ class TalkingDataProcessor:
         """Split data into training and validation sets based on date."""
         data = data.copy()
         
-        # Create validation split based on date
+        # Allocate stable IDs before splitting, including validation rows.
+        if 'click_id' not in data.columns:
+            data['click_id'] = np.arange(len(data), dtype=np.uint32)
+
+        # Retain the original date/hour holdout (not a strictly forward split).
         data['valid_date'] = data['click_time'] > self.config.VALID_DATE
-        data['is_valid'] = data['valid_date'] * data['keep_hour']
+        data['is_valid'] = data['valid_date'] & data['keep_hour']
         
         valid_data = data[data['is_valid'] == True].copy()
         train_data = data[data['is_valid'] == False].copy()
@@ -77,24 +78,21 @@ class TalkingDataProcessor:
         train_data = train_data.reset_index(drop=True)
         valid_data = valid_data.reset_index(drop=True)
         
-        # Add click_id for train data
-        if 'click_id' not in train_data.columns:
-            train_data['click_id'] = train_data.index
-        
         return train_data, valid_data
     
     def prepare_final_data(self, data: pd.DataFrame, data_type: str = 'train') -> pd.DataFrame:
         """Prepare final dataset with selected columns."""
         if data_type == 'train':
-            cols = ['click_id', 'is_attributed', 'day', 'hour', 'ip', 'app', 'os', 'device', 'channel']
+            cols = ['click_id', 'is_attributed', 'day', 'hour', 'ip', 'app', 'os', 'device', 'channel', 'click_time']
         else:
-            cols = ['click_id', 'day', 'hour', 'ip', 'app', 'os', 'device', 'channel']
+            cols = ['click_id', 'day', 'hour', 'ip', 'app', 'os', 'device', 'channel', 'click_time']
             
         return data[cols]
     
     def save_processed_data(self, data: pd.DataFrame, filename: str):
         """Save processed data to feather format."""
         file_path = self.config.PROCESSED_DATA_DIR / filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         data.to_feather(file_path)
         print(f"Saved {filename}: {data.shape}")
 
@@ -174,12 +172,12 @@ class FeatureEngineer:
     def create_next_click_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Create next click time features."""
         data = data.copy()
-        data['click_time'] = data['click_time'].astype(np.int64) // 10 ** 9
+        data['click_time'] = pd.to_datetime(data['click_time'])
         data = data.sort_values(by=['ip', 'app', 'device', 'os', 'click_time'])
         
         # Calculate next click time
         data['next_time'] = data.groupby(['ip', 'app', 'device', 'os'])['click_time'].shift(-1)
-        data['next_click'] = data['next_time'] - data['click_time']
+        data['next_click'] = (data['next_time'] - data['click_time']).dt.total_seconds()
         data['next_click'] = data['next_click'].fillna(-1.0)
         
         return data[['click_id', 'next_click']]
@@ -214,7 +212,7 @@ class FeatureEngineer:
         """Optimize data types to reduce memory usage."""
         for column in df.columns:
             if df[column].dtype == 'int64':
-                if df[column].max() <= 250:
+                if df[column].max() <= 250 and df[column].min() >= 0:
                     df[column] = df[column].astype('uint8')
                 elif df[column].max() <= 65000 and df[column].min() >= 0:
                     df[column] = df[column].astype('uint16')

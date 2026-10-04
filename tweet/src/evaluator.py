@@ -1,136 +1,84 @@
-import os
-import torch
-import pandas as pd
+"""Fold inference and word-set Jaccard evaluation."""
+from pathlib import Path
 import numpy as np
-from tokenizers import ByteLevelBPETokenizer
-from typing import Tuple, List
+import pandas as pd
+import torch
 from .config import Config
+from .data_utils import encode_text, load_tokenizer, normalize_text
 from .models import TweetSentimentModel
+from .trainer import resolve_device
+
 
 class TweetEvaluator:
-    
     def __init__(self, config: Config):
         self.config = config
-        self.tokenizer = self._load_tokenizer()
-    
-    def _load_tokenizer(self) -> ByteLevelBPETokenizer:
-        params = {
-            'vocab_file': self.config.data.vocab_file,
-            'merges_file': self.config.data.merges_file,
-            'lowercase': True,
-            'add_prefix_space': True
-        }
-        return ByteLevelBPETokenizer(**params)
-    
-    def jaccard_score(self, str1: str, str2: str) -> float:
-        try:
-            a = set(str1.lower().split())
-            b = set(str2.lower().split())
-            c = a.intersection(b)
-            return float(len(c)) / (len(a) + len(b) - len(c))
-        except:
-            return -1.0
-    
-    def get_offsets(self, text: str, sentiment: str) -> List[Tuple[int, int]]:
-        text = text.lower()
-        sentiment = sentiment.lower().strip()
-        text = " " + " ".join(text.split())
-        
-        encodes = self.tokenizer.encode(text)
-        sentiment_ids = self.tokenizer.encode(sentiment).ids
-        
-        tokens = [0] + sentiment_ids + [2, 2] + encodes.ids + [2]
-        offsets = [(0, 0)] * 4 + encodes.offsets + [(0, 0)]
-        
-        padding = self.config.data.max_length - len(tokens)
-        if padding > 0:
-            offsets += [(0, 0)] * padding
-            
-        return offsets
-    
-    def extract_selected_text(self, text: str, start_idx: int, end_idx: int, offsets: List[Tuple[int, int]]) -> str:
-        selected_text = ""
-        for ix in range(start_idx, end_idx + 1):
-            if ix < len(offsets):
-                selected_text += text[offsets[ix][0]: offsets[ix][1]]
-                if (ix + 1) < len(offsets) and offsets[ix][1] < offsets[ix + 1][0]:
-                    selected_text += " "
-        return selected_text
-    
-    def compute_score(self, text: str, sentiment: str, start_idx: int, end_idx: int, 
-                     start_pred: int, end_pred: int) -> float:
+        self._tokenizer = None
+
+    @property
+    def tokenizer(self):
+        if self._tokenizer is None:
+            self._tokenizer = load_tokenizer(self.config)
+        return self._tokenizer
+
+    @staticmethod
+    def jaccard_score(str1, str2):
+        a, b = set(str1.lower().split()), set(str2.lower().split())
+        union = a | b
+        return len(a & b) / len(union) if union else 1.0
+
+    def get_offsets(self, text, sentiment):
+        return encode_text(self.tokenizer, text, sentiment, self.config.data.max_length)[2].tolist()
+
+    def extract_selected_text(self, text, start_idx, end_idx, offsets):
+        text = normalize_text(text)
+        start, end = int(start_idx), int(end_idx)
+        if not 0 <= start <= end < len(offsets):
+            return text.strip()
+        a, b = offsets[start][0], offsets[end][1]
+        if offsets[start][1] <= a or b <= offsets[end][0] or b <= a:
+            return text.strip()
+        return text[a:b].strip() or text.strip()
+
+    def compute_score(self, text, sentiment, start_idx, end_idx, start_pred, end_pred):
         offsets = self.get_offsets(text, sentiment)
-        
-        if start_pred > end_pred:
-            pred_text = text
-        else:
-            pred_text = self.extract_selected_text(text, start_pred, end_pred, offsets)
-        
-        true_text = self.extract_selected_text(text, start_idx, end_idx, offsets)
-        
-        return self.jaccard_score(true_text, pred_text)
-    
-    def evaluate_fold(self, fold: int, valid_data: pd.DataFrame, predictions: pd.DataFrame) -> float:
-        evaluator = TweetEvaluator(self.config)
-        
-        data = valid_data.join(predictions, how='inner')
-        data['score'] = data.apply(
-            lambda x: evaluator.compute_score(
-                x['text'], x['sentiment'], 
-                x['start_idx'], x['end_idx'],
-                x['start_pred'], x['end_pred']
-            ), axis=1
-        )
-        
-        return data['score'].mean()
+        truth = self.extract_selected_text(text, start_idx, end_idx, offsets)
+        pred = self.extract_selected_text(text, start_pred, end_pred, offsets)
+        return self.jaccard_score(truth, pred)
+
+    def evaluate_fold(self, fold, valid_data, predictions):
+        if len(valid_data) != len(predictions) or not len(valid_data):
+            raise ValueError(f'Fold {fold}: validation rows and predictions must align and be nonempty')
+        data = valid_data.reset_index(drop=True).join(predictions.reset_index(drop=True))
+        scores = []
+        for row in data.itertuples():
+            offsets = self.get_offsets(row.text, row.sentiment)
+            pred = self.extract_selected_text(row.text, row.start_pred, row.end_pred, offsets)
+            # Compare with the actual annotated string, not its BPE reconstruction.
+            scores.append(self.jaccard_score(row.selected_text, pred))
+        return float(np.mean(scores))
+
 
 class TweetScorer:
-    
     def __init__(self, config: Config):
         self.config = config
-        self.device = torch.device(config.training.device if torch.cuda.is_available() else 'cpu')
-    
-    def predict_fold(self, fold: int, data_loader: torch.utils.data.DataLoader) -> pd.DataFrame:
-        model = TweetSentimentModel(self.config).to(self.device)
-        
-        checkpoint_path = os.path.join(self.config.data.model_path, f'model_fold_{fold}.pt')
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self.device = resolve_device(config)
+
+    def predict_fold(self, fold, data_loader):
+        path = Path(self.config.data.model_path) / f'model_fold_{fold}.pt'
+        checkpoint = torch.load(path, map_location='cpu', weights_only=True)
+        model = TweetSentimentModel(self.config, encoder_config=checkpoint['encoder_config']).to(self.device)
         model.load_state_dict(checkpoint['model_state_dict'])
-        
         model.eval()
-        
-        start_preds = []
-        end_preds = []
-        start_idxs = []
-        end_idxs = []
-        
+        results = {'start_pred': [], 'end_pred': []}
+        if data_loader.dataset.is_training:
+            results.update(start_idx=[], end_idx=[])
         with torch.no_grad():
             for batch in data_loader:
-                for key, value in batch.items():
-                    batch[key] = value.to(self.device)
-                
-                start_logits, end_logits, _ = model(batch['tokens'], batch['masks'])
-                
-                start_pred = start_logits.argmax(dim=1)
-                end_pred = end_logits.argmax(dim=1)
-                
-                start_preds.extend(start_pred.cpu().numpy())
-                end_preds.extend(end_pred.cpu().numpy())
-                start_idxs.extend(batch['start_idx'].cpu().numpy())
-                end_idxs.extend(batch['end_idx'].cpu().numpy())
-                
-                for key, value in batch.items():
-                    batch[key] = value.to('cpu')
-        
-        results = pd.DataFrame({
-            'start_idx': start_idxs,
-            'end_idx': end_idxs,
-            'start_pred': start_preds,
-            'end_pred': end_preds
-        })
-        
-        model = model.cpu()
-        del model
-        torch.cuda.empty_cache()
-        
-        return results
+                start, end, _ = model(batch['tokens'].to(self.device), batch['masks'].to(self.device),
+                                      batch['text_mask'].to(self.device))
+                results['start_pred'].extend(start.argmax(dim=1).cpu().tolist())
+                results['end_pred'].extend(end.argmax(dim=1).cpu().tolist())
+                if 'start_idx' in results:
+                    results['start_idx'].extend(batch['start_idx'].tolist())
+                    results['end_idx'].extend(batch['end_idx'].tolist())
+        return pd.DataFrame(results)

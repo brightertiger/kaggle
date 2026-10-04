@@ -4,7 +4,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import QuantileTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import StratifiedKFold
 from .config import Config
 
 class EnsemblePredictor:
@@ -24,6 +24,12 @@ class EnsemblePredictor:
         self.predictions_df[name] = predictions
     
     def fit(self, train_predictions, train_targets, cv_folds=5):
+        train_predictions = np.asarray(train_predictions)
+        train_targets = np.asarray(train_targets)
+        if train_predictions.ndim != 2 or train_predictions.shape[0] != len(train_targets):
+            raise ValueError('Expected a rows-by-models matrix aligned with targets')
+        if train_predictions.shape[1] == 0 or set(np.unique(train_targets)) != {0, 1}:
+            raise ValueError('Need at least one model and both binary target classes')
         if self.method == 'logistic_regression':
             self._fit_logistic_regression(train_predictions, train_targets, cv_folds)
         elif self.method == 'random_forest':
@@ -39,28 +45,18 @@ class EnsemblePredictor:
         self.models = []
         self.scalers = []
         
-        for fold in range(cv_folds):
-            # Create fold splits (assuming you have fold information)
-            # For simplicity, we'll use random splits
-            n_samples = len(train_predictions)
-            fold_size = n_samples // cv_folds
-            
-            val_start = fold * fold_size
-            val_end = (fold + 1) * fold_size if fold < cv_folds - 1 else n_samples
-            
-            val_indices = np.arange(val_start, val_end)
-            train_indices = np.concatenate([
-                np.arange(0, val_start),
-                np.arange(val_end, n_samples)
-            ])
-            
+        if cv_folds < 2 or np.bincount(train_targets.astype(int)).min() < cv_folds:
+            raise ValueError('Each target class needs at least cv_folds samples')
+        splitter = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=Config.SEED)
+        for fold, (train_indices, val_indices) in enumerate(splitter.split(train_predictions, train_targets)):
             X_train = train_predictions[train_indices]
             y_train = train_targets[train_indices]
             X_val = train_predictions[val_indices]
             y_val = train_targets[val_indices]
             
             # Scale features
-            scaler = QuantileTransformer(n_quantiles=100, output_distribution='normal')
+            scaler = QuantileTransformer(n_quantiles=min(100, len(X_train)),
+                                         output_distribution='normal', random_state=Config.SEED)
             X_train_scaled = scaler.fit_transform(X_train)
             X_val_scaled = scaler.transform(X_val)
             
@@ -80,6 +76,9 @@ class EnsemblePredictor:
     def _fit_random_forest(self, train_predictions, train_targets, cv_folds):
         self.models = []
         
+        if cv_folds < 1:
+            raise ValueError('cv_folds must be positive')
+        # Seed ensemble; these fits are not held-out CV estimates.
         for fold in range(cv_folds):
             model = RandomForestClassifier(
                 n_estimators=100,
@@ -99,7 +98,7 @@ class EnsemblePredictor:
         
         # Normalize weights
         weights = np.array(weights)
-        weights = weights / weights.sum()
+        weights = weights / weights.sum() if weights.sum() > 0 else np.ones(len(weights)) / len(weights)
         
         self.weights = weights
         print(f'Model weights: {weights}')
@@ -140,10 +139,14 @@ class EnsemblePredictor:
 class StackingEnsemble:
     def __init__(self, base_models, meta_model=None):
         self.base_models = base_models
-        self.meta_model = meta_model or LogisticRegression(random_state=Config.SEED)
+        self.meta_model = meta_model if meta_model is not None else LogisticRegression(random_state=Config.SEED)
         self.is_fitted = False
     
     def fit(self, X_train, y_train, X_val, y_val):
+        """Fit on a calibration set unseen by the already-fitted base models.
+
+        X_val must also be separate from calibration and base-model training.
+        """
         # Get base model predictions
         base_predictions_train = []
         base_predictions_val = []

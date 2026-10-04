@@ -78,7 +78,7 @@ ehthumbs.db
 Thumbs.db
 
 # Data directories
-data/
+/data/
 output/
 model/
 score/
@@ -114,3 +114,7 @@ tensorboard_logs/
 
 # Weights & Biases
 wandb/
+
+# Synthetic smoke-test inputs and outputs
+sample_data/
+dry_run_output/

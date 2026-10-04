@@ -1,372 +1,228 @@
-# Spooky Author Identification: A Multi-Model Approach
+# [Spooky Author Identification](https://www.kaggle.com/competitions/spooky-author-identification)
 
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![XGBoost](https://img.shields.io/badge/XGBoost-1.5%2B-green.svg)](https://xgboost.readthedocs.io/)
-[![Keras](https://img.shields.io/badge/Keras-2.8%2B-red.svg)](https://keras.io/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+Final rank: not documented / Teams: not documented / Medal: not documented in the portfolio table.
 
-A comprehensive machine learning pipeline for author identification using text analysis techniques. This project implements multiple modeling approaches including traditional machine learning (XGBoost, Naive Bayes) and deep learning (Neural Networks, LSTM) to classify text passages by their authors.
+I approached author identification as a combination of writing style,
+lexical patterns, and sentence meaning. This folder preserves that approach:
+handcrafted text features, Naive Bayes, pooled GloVe embeddings, an LSTM,
+and an XGBoost stacker.
 
-## 🎯 Project Overview
+The code is a repaired reconstruction of my competition pipeline.
+The repository does not contain a verified leaderboard score or an ablation log;
+I do not treat the old README's accuracy claims as measured results.
 
-This project addresses the challenge of automated author identification from text samples, a classic problem in natural language processing and stylometry. The solution combines sophisticated feature engineering, multiple modeling approaches, and ensemble techniques to achieve high classification accuracy.
+## Problem
 
-### Key Features
+Given a passage, predict its author: Edgar Allan Poe (`EAP`),
+H. P. Lovecraft (`HPL`), or Mary Wollstonecraft Shelley (`MWS`).
+The output is a probability for each author, not just a winning label.
 
-- **Multi-Model Approach**: XGBoost, Naive Bayes, Neural Networks, and LSTM
-- **Advanced Feature Engineering**: Text statistics, POS tagging, n-gram analysis, and SVD
-- **Deep Learning Integration**: Keras-based neural networks with GloVe embeddings
-- **Ensemble Methods**: Model stacking and feature combination
-- **Production Ready**: Clean, modular codebase with comprehensive documentation
-- **Flexible Pipeline**: Step-by-step or full pipeline execution
+The competition uses multiclass logarithmic loss: confident mistakes are costly.
+That makes probability quality important throughout the stack.
+See the [competition overview](https://www.kaggle.com/c/spooky-author-identification).
 
-## 🏗️ Architecture
+Short passages can share vocabulary, themes, and narrative conventions.
+I wanted the model to distinguish an author's sentence construction and word
+choices without relying only on obvious horror-related keywords.
 
-### Model Architecture
+## Data
 
-The solution combines multiple approaches:
+The inputs are CSV files containing sentence-like excerpts from public-domain fiction.
+The [data description](https://www.kaggle.com/c/spooky-author-identification/data)
+notes that automated sentence splitting sometimes leaves unusual fragments.
 
-1. **Feature Engineering Pipeline**:
-   - Text statistics (word count, character count, punctuation)
-   - Linguistic features (POS tags, stopwords, stemming)
-   - N-gram analysis (word and character level)
-   - Dimensionality reduction (SVD)
+| File | Required columns | Meaning |
+| --- | --- | --- |
+| `train.csv` | `id,text,author` | Labeled passages |
+| `test.csv` | `id,text` | Passages to classify |
+| `sample_submission.csv` | `id,EAP,HPL,MWS` | Competition output template |
 
-2. **Model Ensemble**:
-   - **XGBoost**: Gradient boosting for tabular features
-   - **Naive Bayes**: Probabilistic classification with multiple feature types
-   - **Neural Network**: Simple feedforward network with GloVe embeddings
-   - **LSTM**: Recurrent network for sequence modeling
+IDs are identifiers, never predictive features. The loader preserves them as strings.
+Missing text becomes an empty string; length ratios remain finite for empty
+or punctuation-only passages. Unknown author labels and duplicate IDs fail early.
 
+I do not assume balanced classes. The repaired pipeline uses stratified folds.
+There is no source-book field in the expected schema, so random sentence folds
+cannot establish how well the model generalizes to entirely unseen books.
+No book lookup or external answer matching is part of this implementation.
+
+## Approach
+
+### Validation and stacking
+
+I use five shuffled, stratified folds with a fixed seed by default.
+Naive Bayes produces out-of-fold training probabilities and averages test
+probabilities across folds. The repaired neural stages follow the same contract:
+every training row receives a prediction from a model that excluded that row.
+An inner holdout within each neural training fold controls early stopping.
+
+This repairs the migrated code's shuffled, partial, in-sample neural outputs.
+It is a reproducibility fix, not evidence of an original competition CV result.
+
+XGBoost also runs cross-validation on the assembled feature table.
+Its saved history is a **stacker diagnostic**, not an unbiased estimate of the
+whole ensemble: base predictions are generated before that CV, rather than
+rebuilt inside every outer split. A rigorous estimate would need nested stacking.
+
+### Text statistics and linguistic features
+
+I preserve raw punctuation and capitalization for stylistic features.
+A lowercase, punctuation-stripped view supports word counts, unique-word counts,
+average word length, stopword counts, and Porter-stemming counts.
+NLTK adds noun, pronoun, determiner, adjective, and verb counts.
+Ratios normalize these signals by passage length.
+
+### Sparse lexical features
+
+I train separate Multinomial Naive Bayes models on:
+
+- Word counts with n-grams from 1 to 3 and English stopword removal.
+- Character counts with n-grams from 1 to 7.
+- Character TF-IDF with n-grams from 1 to 5.
+
+Each representation contributes author probabilities to the final feature table.
+Character features retain spelling fragments and punctuation patterns that a
+word vocabulary can miss. Word and character TF-IDF also feed truncated SVD,
+with 10 components per view by default and a smaller legal rank for tiny inputs.
+
+The inherited approach fits vocabularies, IDF, SVD, and the neural tokenizer
+on combined training and test text. This is transductive preprocessing:
+no test labels are used, but it is not a strictly inductive evaluation.
+
+### Embedding models
+
+Both neural models start from trainable, 50-dimensional GloVe word embeddings
+and sequences padded or truncated to 90 tokens.
+The simple model averages embeddings before a softmax classifier.
+The recurrent model uses an LSTM with 100 units, dropout, recurrent dropout,
+and the same author softmax output.
+
+I retain the staged learning-rate and batch-size schedule in `Config.NN_SCHEDULE`.
+Training uses Adam and categorical cross-entropy, with early stopping on loss.
+`--nn_epochs` replaces that schedule for a short run.
+`--random_embeddings` is an explicit alternative for smoke testing without GloVe;
+normal training still requires the local embedding file.
+
+### Final combination
+
+```mermaid
+flowchart TD
+    A[CSV passages and IDs] --> B[Text statistics and POS ratios]
+    A --> C[Word counts and character count / TF-IDF]
+    C --> D[Naive Bayes out-of-fold probabilities]
+    A --> E[Word and character TF-IDF / SVD]
+    A --> F[GloVe sequences]
+    F --> G[Average-pooling classifier]
+    F --> H[LSTM classifier]
+    B --> I[Join features by ID]
+    D --> I
+    E --> I
+    G --> I
+    H --> I
+    I --> J[XGBoost multiclass stacker]
+    J --> K[id, EAP, HPL, MWS submission]
 ```
-Text Input → Feature Engineering → Multiple Models → Ensemble Prediction
-     ↓              ↓                    ↓              ↓
-  Statistics    N-grams/SVD        XGBoost/NB/NN    Final Author
-  POS Tags      Embeddings         LSTM            Classification
+
+The stacker receives text statistics, SVD features, and base-model probabilities,
+plus neural predicted classes, confidence, and agreement.
+It uses shallow boosted trees, row and column subsampling, and regularization.
+There is no additional weighted blend or probability post-processing.
+The final fit uses the configured boosting-round count; CV is reported separately.
+
+## What mattered most
+
+I retained these as the central ideas of the solution. Without saved ablations,
+I cannot honestly attach a score gain or rank these by measured improvement.
+
+- Combining word and character representations gives the stack different lexical views.
+- Length-normalized style features complement vocabulary-based classification.
+- Pooling and recurrence provide different summaries of the same embeddings.
+- Out-of-fold probabilities make base-model predictions usable as stacking inputs.
+- ID alignment and a fixed author-column order are essential to a valid submission.
+
+## Repository layout
+
+```text
+spooky/
+├── README.md                  # Method, limitations, and run instructions
+├── main.py                    # CLI for the full pipeline or individual stages
+├── dry_run.py                 # Synthetic CSV generation and CPU smoke validation
+├── example_usage.py           # Python API examples; defaults to the dry run
+├── requirements.txt           # Libraries imported by the solution
+├── setup.py                   # Package metadata and spooky-author CLI entry point
+├── .gitignore                 # Excludes datasets, caches, models, and generated scores
+└── src/
+    ├── __init__.py            # Package marker
+    ├── config.py              # Paths, author mapping, and training defaults
+    ├── data_utils.py          # CSV validation and ID-checked feature assembly
+    ├── feature_engineering.py # Style features, sparse n-grams, and SVD
+    ├── models.py             # Naive Bayes, embedding models, and XGBoost
+    └── pipeline.py           # Stage orchestration, CSV outputs, and model reload
 ```
 
-### Data Pipeline
+## How to run
 
-1. **Text Preprocessing**: Cleaning, tokenization, normalization
-2. **Feature Extraction**: Statistical, linguistic, and semantic features
-3. **Model Training**: Cross-validation for robust evaluation
-4. **Ensemble Prediction**: Combining multiple model outputs
+### Real competition data
 
-## 📊 Results
-
-### Performance Metrics
-
-- **Cross-validation Accuracy**: 95.2% ± 1.8%
-- **Individual Model Performance**:
-  - XGBoost: 94.7% accuracy
-  - Naive Bayes: 92.3% accuracy
-  - Neural Network: 91.8% accuracy
-  - LSTM: 93.1% accuracy
-- **Ensemble Performance**: 96.1% accuracy
-
-### Key Insights
-
-1. **Feature Diversity**: Combining statistical and linguistic features provided significant gains
-2. **Model Complementarity**: Different models captured different aspects of writing style
-3. **Ensemble Benefits**: Model stacking consistently improved performance
-4. **Feature Importance**: Word-level features were most predictive, followed by character n-grams
-
-## 🚀 Quick Start
-
-### Installation
+Use Python 3.11 or newer, from this directory:
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/spooky-author-identification.git
-cd spooky-author-identification
-
-# Install dependencies
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m nltk.downloader -d ./nltk_data stopwords averaged_perceptron_tagger_eng
 ```
 
-### Basic Usage
+Unzip the competition CSVs and obtain the matching GloVe file separately:
 
-```python
-from src.pipeline import SpookyAuthorPipeline
-
-# Initialize pipeline
-pipeline = SpookyAuthorPipeline(data_dir='data', model_dir='models', score_dir='scores')
-
-# Run complete training and inference
-fold_scores, predictions = pipeline.run_full_pipeline()
+```text
+spooky/
+├── data/
+│   ├── train.csv
+│   ├── test.csv
+│   └── sample_submission.csv  # Reference template; not required by the loader
+└── glove/
+    └── glove.6B.50d.txt
 ```
-
-### Command Line Interface
 
 ```bash
-# Run full pipeline
-python main.py --data_dir data --model_dir models --score_dir scores
-
-# Run specific steps
-python main.py --step text_features
-python main.py --step naive_bayes
-python main.py --step neural_network
-python main.py --step lstm
-python main.py --step xgboost
-
-# Show feature importance
-python main.py --show_importance
+python main.py --data_dir ./data --glove_path ./glove/glove.6B.50d.txt \
+  --nltk_data_dir ./nltk_data --model_dir ./models --score_dir ./scores \
+  --show_importance
 ```
 
-## 📁 Project Structure
+The submission is `scores/xgb_score.csv`; `scores/xgb_cv.csv` contains the
+stacker CV history. `models/xgb_model.json` is the final booster checkpoint.
+Intermediate feature and probability CSVs are also written to `scores/`.
+The neural fold models are not persisted; reproducing their scores requires training.
 
-```
-spooky-author-identification/
-├── src/                          # Source code
-│   ├── __init__.py
-│   ├── config.py                 # Configuration settings
-│   ├── data_utils.py            # Data loading and processing
-│   ├── feature_engineering.py   # Feature extraction classes
-│   ├── models.py                # Model implementations
-│   └── pipeline.py              # Main pipeline orchestration
-├── data/                        # Data directory
-│   ├── train.csv                # Training data
-│   ├── test.csv                 # Test data
-│   └── glove/                   # GloVe embeddings
-│       └── glove.6B.50d.txt
-├── models/                      # Trained model checkpoints
-├── scores/                      # Prediction outputs
-├── main.py                      # Command-line interface
-├── example_usage.py             # Usage examples
-├── requirements.txt             # Python dependencies
-└── README.md                    # This file
-```
+Use `--step text_features`, `naive_bayes`, `neural_network`, or `lstm` to regenerate
+a stage. `--step xgboost` requires all preceding artifacts for the same dataset.
+Use a fresh score directory after changing input text or configuration:
+ID validation cannot detect a stale artifact with unchanged IDs.
+`python main.py --help` lists paths and short-training overrides.
 
-## 🔧 Configuration
-
-Key configuration parameters in `src/config.py`:
-
-```python
-class Config:
-    # Text preprocessing
-    MAX_SEQUENCE_LENGTH = 90
-    EMBEDDING_DIM = 50
-    
-    # Author mapping
-    AUTHOR_MAP = {'EAP': 0, 'HPL': 1, 'MWS': 2}
-    NUM_CLASSES = 3
-    
-    # XGBoost parameters
-    XGB_PARAMS = {
-        'max_depth': 4,
-        'learning_rate': 0.05,
-        'subsample': 0.75,
-        'colsample_bytree': 1.0
-    }
-    
-    # Neural network parameters
-    NN_BATCH_SIZE = 8
-    NN_EPOCHS = 20
-    NN_LEARNING_RATE = 0.0001
-```
-
-## 🧪 Advanced Usage
-
-### Custom Feature Engineering
-
-```python
-from src.feature_engineering import TextFeatureEngineer
-
-# Create custom feature engineer
-engineer = TextFeatureEngineer()
-
-# Extract features from custom text
-sample_df = pd.DataFrame({'text': ['Your text here']})
-features = engineer.extract_all_features(sample_df)
-```
-
-### Individual Model Training
-
-```python
-from src.models import XGBoostModel, NaiveBayesModel
-
-# Train XGBoost model
-xgb_model = XGBoostModel()
-xgb_model.train(train_data, target_column='author')
-predictions = xgb_model.predict(test_data)
-
-# Train Naive Bayes model
-nb_model = NaiveBayesModel()
-train_score, test_score = nb_model.train_cv(train_features, train_targets, test_features)
-```
-
-### Custom Neural Network Architecture
-
-```python
-from src.models import NeuralNetworkModel
-
-# Train LSTM model
-lstm_model = NeuralNetworkModel(model_type='lstm')
-train_score, test_score = lstm_model.train(train_texts, test_texts, train_targets)
-```
-
-## 📈 Training Process
-
-### Feature Engineering Pipeline
-
-1. **Text Statistics**: Word count, character count, punctuation analysis
-2. **Linguistic Features**: POS tagging, stopword analysis, stemming
-3. **N-gram Analysis**: Word and character level n-grams
-4. **Dimensionality Reduction**: SVD for feature compression
-
-### Model Training Strategy
-
-- **Cross-validation**: 5-fold CV for robust evaluation
-- **Early Stopping**: Prevent overfitting in neural networks
-- **Learning Rate Scheduling**: Adaptive learning rates
-- **Feature Scaling**: Normalization for neural networks
-
-### Ensemble Methods
-
-- **Feature Combination**: Merging outputs from different feature types
-- **Model Stacking**: Combining predictions from multiple models
-- **Weighted Averaging**: Performance-based model weighting
-
-## 🔬 Technical Details
-
-### Feature Engineering
-
-#### Text Statistics Features
-- Word count and unique word count
-- Average word length
-- Punctuation count and ratio
-- Capitalization patterns
-- Stopword analysis
-
-#### Linguistic Features
-- Part-of-speech tag counts (nouns, verbs, adjectives, etc.)
-- Stemming analysis
-- Syntactic complexity measures
-
-#### N-gram Features
-- Word n-grams (1-3 grams)
-- Character n-grams (1-7 grams)
-- TF-IDF vectorization
-- SVD dimensionality reduction
-
-### Model Architectures
-
-#### XGBoost
-- Gradient boosting with custom hyperparameters
-- Feature importance analysis
-- Cross-validation for robust evaluation
-
-#### Naive Bayes
-- Multinomial Naive Bayes
-- Multiple feature types (word, character count, TF-IDF)
-- Cross-validation for out-of-fold predictions
-
-#### Neural Networks
-- Simple feedforward network with GloVe embeddings
-- Global average pooling
-- Dropout for regularization
-
-#### LSTM
-- Recurrent neural network with LSTM cells
-- GloVe word embeddings
-- Dropout and recurrent dropout
-
-## 📊 Evaluation Metrics
-
-- **Primary Metric**: Classification accuracy
-- **Cross-validation**: 5-fold stratified CV
-- **Feature Importance**: XGBoost feature scores
-- **Model Comparison**: Individual model performance analysis
-
-## 🛠️ Development
-
-### Running Examples
+### Synthetic dry run
 
 ```bash
-# Run example usage
-python example_usage.py
-
-# Test individual components
-python -c "from src.feature_engineering import TextFeatureEngineer; print('✅ Import successful')"
+python dry_run.py
+# Interpreter used for validation in this workspace:
+/Users/ujjwal/Downloads/solo/kaggle/.venv/bin/python dry_run.py
 ```
 
-### Code Quality
+The script writes invented passages with the competition schema under `sample_data/`.
+It runs all stages on CPU using small random embeddings and a short neural fit.
+No GloVe weights are downloaded. On first use it downloads small NLTK stopword
+and English POS-tagger resources if unavailable; subsequent runs reuse them.
+An offline first run needs those resources provisioned beforehand.
 
-```bash
-# Format code
-black src/
+Outputs go under `dry_run_output/`. Checks cover submission column order,
+ID order, finite probabilities summing to one, complete training-score rows,
+CV history, and booster reloading. Empty and punctuation-only test passages
+exercise preprocessing edge cases. Success prints `DRY RUN PASS` and exits normally.
+This verifies execution, not competition performance.
 
-# Lint code
-flake8 src/
+## Lessons / what I'd do differently
 
-# Type checking
-mypy src/
-```
-
-## 📚 Methodology
-
-### Feature Engineering Approach
-
-The feature engineering pipeline extracts multiple types of features to capture different aspects of writing style:
-
-1. **Statistical Features**: Basic text statistics that capture writing patterns
-2. **Linguistic Features**: POS tags and linguistic complexity measures
-3. **N-gram Features**: Word and character level patterns
-4. **Semantic Features**: Word embeddings and dimensionality reduction
-
-### Model Selection Rationale
-
-- **XGBoost**: Excellent for tabular features, handles non-linear relationships
-- **Naive Bayes**: Fast, probabilistic, good baseline for text classification
-- **Neural Networks**: Captures complex patterns in word embeddings
-- **LSTM**: Models sequential dependencies in text
-
-### Ensemble Strategy
-
-The ensemble approach combines models that capture different aspects of writing style:
-- Statistical patterns (XGBoost)
-- Probabilistic relationships (Naive Bayes)
-- Semantic similarities (Neural Networks)
-- Sequential patterns (LSTM)
-
-## 📚 References
-
-1. **XGBoost**: Chen, T., & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System.
-2. **GloVe**: Pennington, J., et al. (2014). GloVe: Global Vectors for Word Representation.
-3. **LSTM**: Hochreiter, S., & Schmidhuber, J. (1997). Long Short-Term Memory.
-4. **Spooky Author Identification**: https://www.kaggle.com/c/spooky-author-identification
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-### Development Setup
-
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run pre-commit hooks
-pre-commit install
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Kaggle Spooky Author Identification competition organizers
-- GloVe team for word embeddings
-- XGBoost developers for the gradient boosting framework
-- Keras team for the deep learning framework
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This project is for educational and research purposes. The methodology can be applied to various text classification tasks beyond author identification.
+- I would save fold assignments and use nested validation before comparing stack variants.
+- I would test book-aware splits if source metadata were available, to separate style from topic overlap.
+- I would preserve ablations, environment versions, and submission provenance alongside every result.
+- I would persist tokenizers and neural checkpoints for standalone inference on new passages.

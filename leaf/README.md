@@ -1,332 +1,246 @@
-# Cassava Leaf Disease Classification
+# [Cassava Leaf Disease Classification](https://www.kaggle.com/competitions/cassava-leaf-disease-classification)
 
-A comprehensive deep learning solution for the Cassava Leaf Disease Classification competition, featuring advanced computer vision techniques, ensemble methods, and robust training strategies.
+Final rank / number of teams / medal: **not documented in the portfolio record**.
 
-## 🏆 Competition Overview
+I built this solution around EfficientNet-B4, stratified validation,
+stochastic weight averaging, and probability blending.
+This folder is a runnable reconstruction of my competition code.
+The portfolio identifies the method, but does not preserve a leaderboard score
+or the individual experiment recipes behind every model version.
 
-The Cassava Leaf Disease Classification challenge required participants to build models that can identify diseases in cassava plant leaves from images. This solution achieved competitive performance through a combination of:
+## Problem
 
-- **EfficientNet-B4** architecture with transfer learning
-- **Advanced data augmentation** with Albumentations
-- **Stochastic Weight Averaging (SWA)** for improved generalization
-- **Multi-model ensemble** with logistic regression blending
-- **5-fold cross-validation** for robust model evaluation
+I needed to identify the disease category of a cassava leaf from a photograph.
+The task is single-label classification, evaluated by **accuracy**.
+Each test image receives one integer label in the submission.
 
-## 🚀 Key Features
+The challenge is separating disease symptoms from ordinary visual variation:
+leaf orientation, lighting, background, and the amount of leaf visible.
+Class imbalance also makes aggregate accuracy an incomplete diagnostic.
+I used stratified validation and retained per-class reporting to inspect errors.
 
-### 1. Advanced Computer Vision Pipeline
-- **EfficientNet-B4** backbone with ImageNet pretrained weights
-- **Comprehensive data augmentation** including geometric and color transformations
-- **Smart preprocessing** with padding, resizing, and normalization
-- **Test Time Augmentation (TTA)** support for improved predictions
+## Data
 
-### 2. Robust Training Strategy
-- **5-fold stratified cross-validation** ensuring balanced splits
-- **Cosine annealing learning rate scheduling** with warm restarts
-- **Stochastic Weight Averaging** for better generalization
-- **Early stopping** and model checkpointing
-- **Gradient accumulation** for effective large batch training
+The pipeline reads the competition's RGB photographs from JPEG files.
+`train.csv` associates an `image_id` filename with its integer `label`.
+`sample_submission.csv` supplies the test image IDs and submission schema;
+its label column is a placeholder, never a training target.
 
-### 3. Ensemble Methods
-- **Multiple model versions** with different configurations
-- **Logistic regression blending** for optimal model combination
-- **Cross-validation based ensemble** training
-- **Weighted averaging** for final predictions
+The class order is fixed throughout training, scoring, and blending:
 
-### 4. Professional Code Architecture
-- **Modular design** with clear separation of concerns
-- **Configurable parameters** for easy experimentation
-- **Comprehensive logging** and progress tracking
-- **Memory-efficient** data loading and training
+| Label | Category |
+|-------|----------|
+| 0 | Cassava Bacterial Blight (CBB) |
+| 1 | Cassava Brown Streak Disease (CBSD) |
+| 2 | Cassava Green Mottle (CGM) |
+| 3 | Cassava Mosaic Disease (CMD) |
+| 4 | Healthy |
 
-## 📁 Project Structure
+Images can have different source dimensions. The production model sees
+normalized RGB tensors with shape `3 × 512 × 512`.
+I preserve the original files and write fold assignments separately.
+Preparation checks image IDs, labels, image availability, and class support
+before creating the splits. It also prints class counts by fold.
 
+This reconstruction does not perform label correction, duplicate detection,
+or a merge with an external cassava dataset. The old paths referred to a
+merged dataset, but its construction was missing from the recovered code.
+
+## Approach
+
+### Validation first
+
+I use shuffled, seeded **5-fold stratified cross-validation**.
+Each image contributes a prediction from the model whose training split
+excluded that image. These out-of-fold (OOF) probabilities feed the blender.
+Test probabilities are averaged across all trained folds for each run label.
+
+This is an image-level split. It does not guarantee separation by plant,
+photographer, or location; those grouping fields are not supplied to this loader.
+
+### Image preprocessing and augmentation
+
+I pad and resize images before cropping. At the production crop size,
+the intermediate canvas follows the original `600 × 800` dimensions.
+Smaller smoke-test configurations scale that canvas with the crop size.
+
+Training uses random resized crops, transpose, flips, quarter turns,
+affine changes, brightness/contrast, hue/saturation, and coarse dropout.
+Validation uses a center crop. Both paths use ImageNet normalization.
+The missing augmentation module was reconstructed from the documented recipe;
+its exact historical augmentation probabilities were not available.
+
+The implementation uses the current Albumentations interfaces.
+Coarse dropout covers the role of the removed Cutout transform.
+Image features are learned by the CNN; there is no separate handcrafted
+feature extraction stage.
+
+### EfficientNet and optimization
+
+My production backbone is `tf_efficientnet_b4_ns`, initialized with pretrained
+weights, with a linear classifier for the disease categories.
+The alternative `CassavaClassifier` retains the recovered dropout/MLP head
+for experiments; the main pipeline uses the direct classifier.
+
+The defaults retain AdamW, cross-entropy, a learning rate of `1e-4`,
+weight decay of `1e-6`, batch size `6`, and `20` epochs.
+Gradients accumulate across `4` batches, with the final partial group included.
+A cosine schedule with warm restarts controls the initial training phase.
+Focal loss and label smoothing remain available as optional loss modules.
+
+I keep the checkpoint with the best validation accuracy.
+Early stopping can be enabled with `--patience`; the default runs the full schedule.
+The default device is CUDA when available, otherwise CPU.
+
+### Stochastic weight averaging and inference
+
+SWA begins at zero-based epoch index `7` and uses its own learning-rate schedule.
+After averaging weights, I refresh batch-normalization statistics using the
+training loader and evaluate the averaged model on the validation split.
+Scoring selects the better of the ordinary and SWA checkpoints for each fold.
+Short runs that never reach SWA do not save an untrained averaged checkpoint.
+
+Optional TTA averages probabilities over distinct rotations and mirrored views.
+The default uses a single view; `--num_tta` enables additional views.
+Checkpoint metadata records the backbone and image size, so inference can
+rebuild the model without downloading pretrained weights again.
+
+### Probability blending
+
+I concatenate class probabilities from each model run and fit
+one-vs-rest logistic regression with `C=0.2`.
+The blender joins rows by image ID and requires complete, matching ID sets.
+Predicted labels are never used as merge keys.
+
+I report held-out blend-fold accuracy, then fit a final blender on all OOF
+features and predict the test rows. The final file contains only `image_id,label`.
+These blend diagnostics are not a fully nested estimate: the underlying CNN
+fold models overlap in their training data. I would use nested validation
+or a separate holdout before making a strong claim about blending gains.
+
+The recovered `version0` through `version7` names are output labels, not
+preserved distinct hyperparameter recipes. Repeating identical settings does
+not provide useful ensemble diversity. The CLI defaults to `version7` alone;
+multiple trained runs can be supplied to `--versions`.
+
+```mermaid
+flowchart LR
+    A[train.csv + RGB JPEGs] --> B[Stratified folds]
+    B --> C[Augmentation + normalization]
+    C --> D[EfficientNet + AdamW]
+    D --> E[Best checkpoint / SWA]
+    E --> F[Held-out class probabilities]
+    E --> G[Test TTA + fold averaging]
+    F --> H[Logistic regression blender]
+    G --> H
+    H --> I[submission.csv]
 ```
+
+## What mattered most
+
+These are the design choices I retained; the archive does not contain
+controlled ablations from which I can assign numerical score improvements.
+
+- Pretrained EfficientNet features made transfer learning the core of the solution.
+- Stratification kept disease classes represented in each validation fold.
+- Spatial and color augmentation targeted variation in leaf photographs.
+- SWA offered a second checkpoint candidate after the main optimization phase.
+- Keeping OOF probabilities made blending possible without fitting to test labels.
+
+## Repository layout
+
+```text
 leaf/
-├── src/
-│   ├── __init__.py
-│   ├── pipeline.py              # Main training pipeline
-│   ├── data/                    # Data processing modules
-│   │   ├── __init__.py
-│   │   ├── data_preprocessing.py    # Data preparation and analysis
-│   │   └── data_utils.py           # Dataset classes and data loaders
-│   ├── models/                  # Model architectures and loss functions
-│   │   ├── __init__.py
-│   │   ├── models.py               # EfficientNet model architecture
-│   │   └── loss.py                 # Custom loss functions
-│   ├── training/                # Training and inference modules
-│   │   ├── __init__.py
-│   │   ├── trainer.py              # Training utilities with SWA
-│   │   ├── inference.py            # Prediction pipeline
-│   │   └── scoring.py              # Model evaluation and metrics
-│   └── utils/                   # Utility modules
-│       ├── __init__.py
-│       ├── config.py               # Configuration parameters
-│       └── ensemble.py             # Ensemble methods
-├── main.py                     # Command-line interface
-├── example_usage.py           # Usage examples
-├── requirements.txt            # Dependencies
-└── README.md                  # This file
+├── README.md                     # Solution narrative and runnable commands
+├── main.py                       # CLI for preparation, training, scoring and blending
+├── dry_run.py                    # Synthetic CPU smoke test and output assertions
+├── example_usage.py              # Equivalent staged Python API example
+├── requirements.txt              # Runtime and plotting dependencies
+├── setup.py                      # Package metadata
+├── .gitignore                    # Local data, models, logs and caches
+└── src/
+    ├── __init__.py               # Package marker
+    ├── pipeline.py               # Fold training, OOF/test artifacts and submission
+    ├── data/
+    │   ├── __init__.py           # Data package marker
+    │   ├── data_preprocessing.py # Schema checks, stratified folds and class counts
+    │   └── data_utils.py         # RGB datasets, transforms and loaders
+    ├── models/
+    │   ├── __init__.py           # Model package marker
+    │   ├── models.py             # EfficientNet and optional MLP classifier head
+    │   └── loss.py               # Cross-entropy, focal and label-smoothed losses
+    ├── training/
+    │   ├── __init__.py           # Training package marker
+    │   ├── trainer.py            # Accumulation, checkpoints, validation and SWA
+    │   ├── inference.py          # Probability prediction and deterministic TTA
+    │   └── scoring.py            # Accuracy, class reports and confusion matrix
+    └── utils/
+        ├── __init__.py           # Utility package marker
+        ├── config.py            # Per-run configuration and production defaults
+        └── ensemble.py          # OOF feature alignment and logistic blending
 ```
 
-## 🔧 Complete Pipeline
+## How to run
 
-The solution provides a comprehensive end-to-end pipeline organized into logical modules:
+Use Python 3.11 or newer and install the dependencies from this folder:
 
-### 📊 Data Processing (`src/data/`)
-- **`data_preprocessing.py`**: Data preparation, fold creation, and analysis
-- **`data_utils.py`**: Dataset classes, data loaders, and augmentation pipelines
-
-### 🤖 Models (`src/models/`)
-- **`models.py`**: EfficientNet-B4 classifier architecture
-- **`loss.py`**: Custom loss functions including Focal Loss and Label Smoothing
-
-### 🏋️ Training (`src/training/`)
-- **`trainer.py`**: Advanced training utilities with SWA and validation
-- **`inference.py`**: Efficient inference pipeline with TTA support
-- **`scoring.py`**: Model evaluation, metrics, and visualization
-
-### 🛠️ Utilities (`src/utils/`)
-- **`config.py`**: Centralized configuration management
-- **`ensemble.py`**: Multi-model ensemble and blending methods
-
-### 🎯 Main Pipeline (`src/pipeline.py`)
-- **Orchestrates** the complete workflow from data prep to final predictions
-
-## 🛠️ Installation
-
-1. **Clone the repository**:
 ```bash
-git clone <repository-url>
-cd leaf
+python -m pip install -r requirements.txt
 ```
 
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
+Place the downloaded competition files under a chosen data directory:
 
-3. **Set up data directory structure**:
-```
+```text
 data/
-├── raw/
-│   ├── train.csv
-│   ├── data.csv
-│   └── train_images/
-├── merged/
-│   ├── data.csv
-│   └── train_images/
-├── test_images/
-└── test.csv
+├── train.csv                     # image_id,label
+├── train_images/                 # JPEGs named by training image_id
+├── test_images/                  # JPEGs named by test image_id
+├── sample_submission.csv         # image_id,label; placeholder labels are ignored
+└── label_num_to_disease_map.json  # Official mapping; optional for this loader
 ```
 
-## 🎯 Usage
-
-### Command Line Interface
+Run the complete production pipeline, or execute its stages separately:
 
 ```bash
-# Prepare data and create folds
-python main.py --mode prepare_data --data_dir ../../data
+python main.py --mode full_pipeline --data_dir ./data --output_dir ./output --versions version7
 
-# Train a specific model version and fold
-python main.py --mode train --version version7 --fold 0
-
-# Score a model on test data
-python main.py --mode score --version version7 --test_path ../../data/test.csv
-
-# Create ensemble predictions
-python main.py --mode ensemble
-
-# Run complete pipeline
-python main.py --mode full_pipeline --data_dir ../../data --test_path ../../data/test.csv
+python main.py --mode prepare_data --data_dir ./data --output_dir ./output
+# Repeat training for every configured fold before scoring:
+for fold in 0 1 2 3 4; do
+  python main.py --mode train --data_dir ./data --output_dir ./output --version version7 --fold "$fold"
+done
+python main.py --mode score --data_dir ./data --output_dir ./output --version version7
+python main.py --mode ensemble --data_dir ./data --output_dir ./output --versions version7
 ```
 
-### Python API
+Use the same fold count and data/output directories across staged commands.
+`--test_path` accepts another CSV containing `image_id`; images still come from
+`DATA_DIR/test_images`. `python main.py --help` lists the configuration flags.
+Production training may download pretrained weights and is intended for a GPU.
+`--device cpu --no-pretrained` enables local random-initialized experiments.
 
-```python
-from src.pipeline import CassavaPipeline
+Outputs include `folds.csv`, `models/<version>/` checkpoints and logs,
+`scores/<version>_oof.csv`, `scores/<version>_test.csv`, per-version submissions,
+`blend/` fitted estimators, and the final `output/submission.csv`.
+Input images and CSVs are not overwritten.
 
-# Initialize pipeline
-pipeline = CassavaPipeline()
+For a self-contained execution check:
 
-# Prepare data
-pipeline.prepare_data('../../data')
-
-# Train individual models
-for version in ['version0', 'version1', 'version2']:
-    for fold in range(5):
-        pipeline.train_model(version, fold)
-
-# Score models
-for version in ['version0', 'version1', 'version2']:
-    pipeline.score_model(version, '../../data/test.csv')
-
-# Create ensemble
-ensemble_results = pipeline.create_ensemble()
-
-# Run full pipeline
-final_predictions = pipeline.run_full_pipeline('../../data', '../../data/test.csv')
+```bash
+python dry_run.py
 ```
 
-## 🔬 Technical Details
+The dry run writes `sample_data/` and `dry_run_output/` beside this script.
+It uses `20` synthetic training images, `4` test images, `2` folds, a single
+epoch, and random-initialized EfficientNet-B0 with `64 × 64` model inputs.
+It exercises both run labels, accumulation, SWA, TTA, OOF alignment, blending,
+and submission checks on CPU, without downloading weights. No stage is skipped.
+The two run labels deliberately share a configuration to check file plumbing;
+this is not a useful ensemble or a measure of disease-recognition quality.
 
-### Model Architecture
+## Lessons / what I'd do differently
 
-The solution uses **EfficientNet-B4** with custom modifications:
-
-```python
-class EfficientNetModel(nn.Module):
-    def __init__(self, model_name='tf_efficientnet_b4_ns', num_classes=5, pretrained=True):
-        super().__init__()
-        self.model = timm.create_model(model_name, pretrained=pretrained)
-        n_features = self.model.classifier.in_features
-        self.model.classifier = nn.Linear(n_features, num_classes)
-    
-    def forward(self, x):
-        return self.model(x)
-```
-
-### Data Augmentation Strategy
-
-**Training Augmentations**:
-- Padding to 600x800, then resize
-- Random resized crop to 512x512
-- Geometric transformations (transpose, flip, rotate)
-- Color augmentations (brightness, contrast, hue, saturation)
-- Advanced augmentations (coarse dropout, cutout)
-- ImageNet normalization
-
-**Validation Augmentations**:
-- Padding to 600x800, then resize
-- Center crop to 512x512
-- ImageNet normalization
-
-### Training Strategy
-
-**Key Parameters**:
-- Learning rate: 1e-4 with cosine annealing
-- Batch size: 6 with gradient accumulation
-- Epochs: 20 with early stopping
-- Optimizer: AdamW with weight decay 1e-6
-- Loss: Cross Entropy Loss
-
-**Advanced Features**:
-- **Stochastic Weight Averaging**: Applied after epoch 7
-- **Gradient Accumulation**: Every 4 steps
-- **Learning Rate Scheduling**: Cosine annealing with warm restarts
-- **Early Stopping**: Based on validation accuracy
-
-### Ensemble Strategy
-
-1. **Multiple Model Versions**: 8 different configurations (version0-version7)
-2. **Cross-Validation**: 5-fold CV for each version
-3. **Logistic Regression Blending**: Combines predictions optimally
-4. **Polynomial Features**: Enhanced feature space for blending
-
-## 📊 Performance Metrics
-
-The solution achieved competitive performance through:
-
-- **Robust cross-validation**: 5-fold CV ensuring generalization
-- **Advanced augmentation**: Improved model robustness to variations
-- **Ensemble stability**: Reduced variance through model combination
-- **SWA optimization**: Better generalization through weight averaging
-
-### Class Distribution Analysis
-
-The dataset contains 5 classes of cassava diseases:
-- **Cassava Bacterial Blight (CBB)**: ~5%
-- **Cassava Brown Streak Disease (CBSD)**: ~10%
-- **Cassava Green Mottle (CGM)**: ~5%
-- **Cassava Mosaic Disease (CMD)**: ~60% (majority class)
-- **Healthy**: ~20%
-
-## 🔧 Configuration
-
-Key parameters can be adjusted in `src/utils/config.py`:
-
-```python
-class Config:
-    SEED = 42
-    NUM_CLASSES = 5
-    IMAGE_SIZE = 512
-    BATCH_SIZE = 6
-    NUM_WORKERS = 2
-    EPOCHS = 20
-    LEARNING_RATE = 1e-4
-    WEIGHT_DECAY = 1e-6
-    DEVICE = 'cuda:0'
-    MODEL_NAME = 'tf_efficientnet_b4_ns'
-```
-
-## 🚀 Advanced Features
-
-### Memory Optimization
-- **Gradient accumulation** for effective large batch training
-- **Memory-efficient data loading** with proper cleanup
-- **Mixed precision training** support
-- **CUDA memory management** with explicit cleanup
-
-### Training Stability
-- **Gradient clipping** to prevent exploding gradients
-- **Learning rate scheduling** with cosine annealing
-- **Early stopping** based on validation metrics
-- **Model checkpointing** for recovery
-
-### Reproducibility
-- **Fixed random seeds** across all components
-- **Deterministic data splits** for consistent results
-- **Checkpoint saving** for model recovery
-- **Comprehensive logging** for debugging
-
-## 📈 Results and Insights
-
-### Key Innovations
-
-1. **Advanced Data Augmentation**: Comprehensive augmentation pipeline significantly improved model robustness and generalization.
-
-2. **Stochastic Weight Averaging**: SWA implementation provided better generalization compared to standard training.
-
-3. **Ensemble Strategy**: Sophisticated ensemble combining multiple model versions with logistic regression blending.
-
-4. **Cross-Validation Approach**: 5-fold stratified CV ensured robust evaluation and prevented overfitting.
-
-### Performance Improvements
-
-- **Augmentation robustness**: Models trained with comprehensive augmentations showed improved performance on test variations
-- **Ensemble stability**: Reduced prediction variance through model combination
-- **SWA benefits**: Better generalization through weight averaging
-- **Cross-validation reliability**: Consistent performance across different data splits
-
-## 🔮 Future Enhancements
-
-1. **Advanced Architectures**: Integration of Vision Transformers (ViT) or ConvNeXt
-2. **Self-Supervised Learning**: Pretraining on unlabeled cassava images
-3. **Multi-Scale Training**: Training with multiple image resolutions
-4. **Active Learning**: Intelligent sample selection for annotation
-5. **Model Compression**: Knowledge distillation for deployment efficiency
-
-## 📚 References
-
-- [EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks](https://arxiv.org/abs/1905.11946)
-- [Stochastic Weight Averaging](https://arxiv.org/abs/1803.05407)
-- [Albumentations: fast and flexible image augmentations](https://arxiv.org/abs/1809.06839)
-- [Cassava Leaf Disease Classification Competition](https://www.kaggle.com/c/cassava-leaf-disease-classification)
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-*This solution demonstrates advanced techniques in computer vision, deep learning, and ensemble methods, making it a valuable reference for similar competitions and real-world applications in agricultural AI.*
+- I would archive each model's exact configuration and OOF artifacts alongside its checkpoint.
+- I would audit duplicate images and annotation disagreements before adding model capacity.
+- I would test blending on a separate holdout and keep it only if it improves on fold averaging.
+- I would keep this CPU smoke test with the solution so missing data modules and broken interfaces are caught during refactors.

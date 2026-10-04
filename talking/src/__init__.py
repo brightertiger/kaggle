@@ -12,7 +12,7 @@ This package provides a complete pipeline for:
 """
 
 __version__ = "1.0.0"
-__author__ = "Ujjwal Sharma"
+__author__ = "Ujjwal Singh Rao"
 
 from .core.config import Config
 from .pipeline import TalkingDataPipeline

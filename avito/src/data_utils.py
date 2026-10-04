@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 from sklearn.model_selection import KFold
 from typing import Tuple, List
 import os
@@ -15,6 +14,7 @@ class DataSplitter:
         )
     
     def create_cv_folds(self) -> None:
+        self.config.avito.create_directories()
         train_data = pd.read_csv(self.config.avito.TRAIN_DATA_PATH)
         train_data = train_data.drop(['image'], axis=1, errors='ignore')
         
@@ -23,7 +23,7 @@ class DataSplitter:
         
         print(f'Training data shape: {train_data.shape}')
         
-        os.makedirs('../../data/data/files', exist_ok=True)
+        os.makedirs(self.config.avito.FOLDS_DIR, exist_ok=True)
         
         fold = 1
         for train_idx, valid_idx in self.kfold.split(train_data):
@@ -32,12 +32,12 @@ class DataSplitter:
             
             print(f'Fold {fold} - Train: {train_fold.shape}, Valid: {valid_fold.shape}')
             
-            train_fold.to_csv(f'../../data/data/files/train_{fold}.csv', index=False)
-            valid_fold.to_csv(f'../../data/data/files/valid_{fold}.csv', index=False)
+            train_fold.to_csv(f'{self.config.avito.FOLDS_DIR}/train_{fold}.csv', index=False)
+            valid_fold.to_csv(f'{self.config.avito.FOLDS_DIR}/valid_{fold}.csv', index=False)
             fold += 1
         
         test_data = pd.read_csv(self.config.avito.TEST_DATA_PATH)[[self.config.avito.ID_COLUMN]]
-        test_data.to_csv('../../data/data/files/score.csv', index=False)
+        test_data.to_csv(f'{self.config.avito.FOLDS_DIR}/score.csv', index=False)
         print(f'Test data shape: {test_data.shape}')
 
 
@@ -76,8 +76,8 @@ class DataLoader:
         return pd.concat([train_active, test_active], ignore_index=True)
     
     def load_fold_data(self, fold: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        train_idx = pd.read_csv(f'../../data/data/files/train_{fold}.csv')
-        valid_idx = pd.read_csv(f'../../data/data/files/valid_{fold}.csv')
+        train_idx = pd.read_csv(f'{self.config.avito.FOLDS_DIR}/train_{fold}.csv')
+        valid_idx = pd.read_csv(f'{self.config.avito.FOLDS_DIR}/valid_{fold}.csv')
         return train_idx, valid_idx
 
 
@@ -115,3 +115,12 @@ class FeatureValidator:
             print(f"Found {duplicates} duplicate IDs in {file_path}")
             return False
         return True
+
+
+def align_rows(driver: pd.DataFrame, values: pd.DataFrame, key: str) -> pd.DataFrame:
+    """Join by ID without silently dropping, duplicating, or reordering rows."""
+    result = driver.merge(values, on=key, how='left', sort=False,
+                          validate='one_to_one', indicator=True)
+    if (result['_merge'] != 'both').any():
+        raise ValueError(f'Missing rows when joining on {key}')
+    return result.drop(columns='_merge')

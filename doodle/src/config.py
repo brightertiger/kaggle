@@ -2,8 +2,8 @@ import os
 import torch
 
 class Config:
-    def __init__(self):
-        self.data_path = '../data'
+    def __init__(self, data_path='data'):
+        self.data_path = os.fspath(data_path)
         self.model_path = os.path.join(self.data_path, 'model')
         self.score_path = os.path.join(self.data_path, 'score')
         self.submit_path = os.path.join(self.data_path, 'submit')
@@ -20,6 +20,9 @@ class Config:
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.random_seed = 2017
+        self.pretrained = True
+        self.train_ratio = 0.9
+        self.max_samples_per_class = None
         
         self.models = {
             'resnet18': {'name': 'ResNet18', 'fc_features': 512},

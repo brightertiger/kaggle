@@ -1,33 +1,35 @@
-import pandas as pd
+from pathlib import Path
 import numpy as np
-from functools import reduce
+import pandas as pd
+from .config import Config
+
 
 class ModelEnsemble:
-    def __init__(self, model_dir):
-        self.model_dir = model_dir
-    
+    def __init__(self, model_dir, config=None):
+        self.model_dir = Path(model_dir)
+        self.config = config or Config(model_dir=model_dir)
+
+    @staticmethod
+    def average(frames, weights=None):
+        # Duplicate IDs may represent translated views; average those first.
+        frames = [frame.groupby('id', sort=False, as_index=False)['toxic'].mean() for frame in frames]
+        ids = frames[0]['id']
+        if any(set(frame['id']) != set(ids) for frame in frames):
+            raise ValueError('Prediction files have different sets of IDs')
+        values = np.stack([frame.set_index('id').loc[ids, 'toxic'].to_numpy() for frame in frames])
+        if not np.isfinite(values).all() or not ((values >= 0) & (values <= 1)).all():
+            raise ValueError('Predictions must be finite probabilities')
+        return pd.DataFrame({'id': ids, 'toxic': np.average(values, axis=0, weights=weights)})
+
     def post_process_version(self, version):
-        fold_results = []
-        
-        for fold in range(5):
-            data = pd.read_csv(f'{self.model_dir}/version{version}/score_{fold}.csv')
-            data = data.append(data.iloc[:63812, :].copy())
-            fold_results.append(data)
-        
-        print(f'Data shapes: {[df.shape for df in fold_results]}')
-        
-        combined = pd.concat(fold_results, ignore_index=True)
-        ensemble_result = combined.groupby('id').mean().reset_index()
-        
-        ensemble_result.to_csv(f'{self.model_dir}/version_{version}.csv', index=False)
-        return ensemble_result
-    
+        frames = [pd.read_csv(self.model_dir / f'version{version}/score_{fold}.csv', dtype={'id': str})
+                  for fold in range(self.config.N_FOLDS)]
+        result = self.average(frames)
+        result.to_csv(self.model_dir / f'version_{version}.csv', index=False)
+        return result
+
     def create_final_ensemble(self):
-        version1 = self.post_process_version('1')
-        version2 = self.post_process_version('2')
-        
-        combined = pd.concat([version1, version2, version2, version2], ignore_index=True)
-        final_ensemble = combined.groupby('id').mean().reset_index()
-        
-        final_ensemble.to_csv(f'{self.model_dir}/combined.csv', index=False)
-        return final_ensemble
+        result = self.average([self.post_process_version(1), self.post_process_version(2)], weights=[1, 3])
+        result.to_csv(self.model_dir / 'combined.csv', index=False)
+        result.to_csv(self.model_dir / 'submission.csv', index=False)
+        return result

@@ -70,3 +70,10 @@ Thumbs.db
 
 # Kaggle
 kaggle.json
+
+# Synthetic smoke-test artefacts
+sample_data/
+dry_run_output/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

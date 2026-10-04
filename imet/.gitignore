@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+sample_data/
+dry_run_output/
+data/
+output/
+*.log
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

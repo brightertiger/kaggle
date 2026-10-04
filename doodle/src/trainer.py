@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import pickle
 import os
-from torch.utils.data import DataLoader
-from typing import Tuple, Optional
+import random
+from typing import Tuple
 from prettytable import PrettyTable
 
 from .models import ResNetClassifier, TopKAccuracy
@@ -18,44 +18,49 @@ class ModelTrainer:
     def __init__(self, 
                  config: Config,
                  model_name: str = 'resnet50',
-                 learning_rate: float = 0.001,
-                 weight_decay: float = 1e-4):
+                 learning_rate: float = None,
+                 weight_decay: float = None):
         
         self.config = config
         self.model_name = model_name
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
+        self.learning_rate = config.learning_rate if learning_rate is None else learning_rate
+        self.weight_decay = config.weight_decay if weight_decay is None else weight_decay
+        random.seed(config.random_seed)
+        np.random.seed(config.random_seed)
+        torch.manual_seed(config.random_seed)
         
         self.model_path = os.path.join(config.model_path, model_name)
         os.makedirs(self.model_path, exist_ok=True)
         
         self.category_mapping = self._load_categories()
+        self.config.num_classes = len(self.category_mapping)
         self.model = self._create_model()
         self.criterion = nn.CrossEntropyLoss()
         self.accuracy_metric = TopKAccuracy(k=3)
         self.optimizer = optim.Adam(
             self.model.parameters(), 
-            lr=learning_rate, 
-            weight_decay=weight_decay
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay
         )
         
         self.train_loader, self.valid_loader = None, None
-        self.best_metric = 0.0
+        self.best_metric = float('-inf')
         self.patience_counter = 0
 
     def _load_categories(self) -> list:
         categories_path = os.path.join(self.config.data_path, 'categories.pkl')
         with open(categories_path, 'rb') as f:
             categories = pickle.load(f)
-        return [cat.replace('.csv', '') for cat in categories]
+        return [cat.removesuffix('.csv') for cat in categories]
 
     def _create_model(self) -> nn.Module:
         model = ResNetClassifier(
             model_name=self.model_name,
-            num_classes=self.config.num_classes
+            num_classes=self.config.num_classes,
+            pretrained=self.config.pretrained,
         )
         
-        if torch.cuda.device_count() > 1:
+        if self.config.device.type == 'cuda' and torch.cuda.device_count() > 1:
             model = nn.DataParallel(model)
         
         return model.to(self.config.device)
@@ -69,18 +74,25 @@ class ModelTrainer:
 
     def save_checkpoint(self, filepath: str):
         state = {
-            'state_dict': self.model.state_dict(),
+            'state_dict': (self.model.module if isinstance(self.model, nn.DataParallel)
+                           else self.model).state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'best_metric': self.best_metric,
-            'model_name': self.model_name
+            'model_name': self.model_name,
+            'categories': self.category_mapping,
+            'image_size': self.config.image_size,
         }
         torch.save(state, filepath)
         print(f"Model saved to {filepath}")
 
     def load_checkpoint(self, filepath: str):
-        state = torch.load(filepath, map_location=self.config.device)
-        self.model.load_state_dict(state['state_dict'])
+        state = torch.load(filepath, map_location=self.config.device, weights_only=True)
+        if state.get('categories', self.category_mapping) != self.category_mapping:
+            raise ValueError('Checkpoint category order does not match categories.pkl')
+        model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+        model.load_state_dict({k.removeprefix('module.'): v for k, v in state['state_dict'].items()})
         self.optimizer.load_state_dict(state['optimizer'])
+        self.learning_rate = self.optimizer.param_groups[0]['lr']
         self.best_metric = state.get('best_metric', 0.0)
         print(f"Model loaded from {filepath}")
 
@@ -89,7 +101,8 @@ class ModelTrainer:
         train_losses = []
         train_metrics = []
         
-        for batch_idx, sample in enumerate(self.train_loader):
+        batch_sizes = []
+        for sample in self.train_loader:
             images = sample['image'].to(self.config.device)
             labels = sample['label'].to(self.config.device)
             
@@ -103,13 +116,15 @@ class ModelTrainer:
             
             train_losses.append(loss.item())
             train_metrics.append(metric.item())
+            batch_sizes.append(len(labels))
         
-        return np.mean(train_losses), np.mean(train_metrics)
+        return float(np.average(train_losses, weights=batch_sizes)), float(np.average(train_metrics, weights=batch_sizes))
 
     def validate_epoch(self) -> Tuple[float, float]:
         self.model.eval()
         valid_losses = []
         valid_metrics = []
+        batch_sizes = []
         
         with torch.no_grad():
             for sample in self.valid_loader:
@@ -122,10 +137,13 @@ class ModelTrainer:
                 
                 valid_losses.append(loss.item())
                 valid_metrics.append(metric.item())
+                batch_sizes.append(len(labels))
         
-        return np.mean(valid_losses), np.mean(valid_metrics)
+        return float(np.average(valid_losses, weights=batch_sizes)), float(np.average(valid_metrics, weights=batch_sizes))
 
     def train(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> dict:
+        if self.config.epochs < 1 or train_df.empty or valid_df.empty:
+            raise ValueError('Training requires positive epochs and nonempty train/validation data')
         self.prepare_data(train_df, valid_df)
         
         log_table = PrettyTable(['Phase', 'Epoch', 'LR', 'Loss', 'Top-3 Acc'])

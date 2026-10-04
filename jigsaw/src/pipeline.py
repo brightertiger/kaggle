@@ -1,402 +1,185 @@
-#!/usr/bin/env python3
-
-import torch
-import pandas as pd
-import numpy as np
-import os
-from typing import Dict, Any, List, Tuple, Optional
+"""Preprocessing, fold training, bias evaluation, and submission generation."""
+import json
+import math
+import random
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader as TorchDataLoader
+from transformers import AutoTokenizer
 
 from .config import Config
 from .data_utils import DataProcessor, DataLoader
 from .models import BERTClassifier, GPTClassifier, ModelTrainer, CustomLoss
-from .evaluation import ModelEvaluator, BiasEvaluator
+from .models import ToxicCommentDataset, prediction_scores
+from .evaluation import ModelEvaluator
 
 
 class JigsawPipeline:
-    """Main pipeline for Jigsaw Toxic Comment Classification."""
-    
     def __init__(self, config: Config):
         self.config = config
         self.data_processor = DataProcessor(config)
         self.data_loader = DataLoader(config)
         self.evaluator = ModelEvaluator(config)
-        
         self.models = {}
         self.predictions = {}
-        
-        self._setup_device()
-    
-    def _setup_device(self):
-        """Setup computing device."""
-        if torch.cuda.is_available() and self.config.device.startswith('cuda'):
-            self.device = torch.device(self.config.device)
-            print(f"Using GPU: {torch.cuda.get_device_name()}")
-        else:
-            self.device = torch.device('cpu')
-            print("Using CPU")
-    
-    def validate_setup(self) -> bool:
-        """Validate that all required files and dependencies are available."""
-        print("Validating setup...")
-        
-        if not self.config.validate_setup():
-            return False
-        
-        try:
-            import transformers
-            print(f"✅ Transformers version: {transformers.__version__}")
-        except ImportError:
-            print("❌ Transformers library not found")
-            return False
-        
-        try:
-            import torch
-            print(f"✅ PyTorch version: {torch.__version__}")
-        except ImportError:
-            print("❌ PyTorch library not found")
-            return False
-        
-        self.config.create_directories()
-        print("✅ Setup validation completed")
-        return True
-    
-    def process_data(self) -> Dict[str, Any]:
-        """Process data and create training splits."""
-        print("Processing data...")
+        random.seed(config.random_seed)
+        np.random.seed(config.random_seed)
+        torch.manual_seed(config.random_seed)
+        self.device = torch.device(config.device if config.device.startswith('cuda') and torch.cuda.is_available() else 'cpu')
+        config.create_directories()
+        print(f'Using {self.device}')
+
+    def validate_setup(self):
+        return self.config.validate_setup()
+
+    def process_data(self):
         return self.data_processor.process_all_data()
-    
-    def get_tokenizer(self, model_type: str = 'bert'):
-        """Get appropriate tokenizer for the model type."""
-        try:
-            from transformers import BertTokenizer, GPT2Tokenizer
-            
-            if model_type == 'bert':
-                tokenizer = BertTokenizer.from_pretrained(
-                    self.config.bert_config['model_name'],
-                    do_lower_case=True
-                )
-            else:
-                tokenizer = GPT2Tokenizer.from_pretrained(
-                    self.config.gpt_config['model_name']
-                )
-                if tokenizer.pad_token is None:
-                    tokenizer.pad_token = tokenizer.eos_token
-            
-            return tokenizer
-        except ImportError:
-            from pytorch_pretrained_bert import BertTokenizer, GPT2Tokenizer
-            
-            if model_type == 'bert':
-                tokenizer = BertTokenizer.from_pretrained(
-                    self.config.bert_config['model_name'],
-                    do_lower_case=True
-                )
-            else:
-                tokenizer = GPT2Tokenizer.from_pretrained(
-                    self.config.gpt_config['model_name']
-                )
-            
-            return tokenizer
-    
-    def train_bert_model(self, fold: int) -> Dict[str, Any]:
-        """Train BERT model for a specific fold."""
-        print(f"Training BERT model for fold {fold}...")
-        
-        train_data, valid_data = self.data_loader.load_fold_data(fold)
-        tokenizer = self.get_tokenizer('bert')
-        
-        model = BERTClassifier(self.config).to(self.device)
-        trainer = ModelTrainer(self.config, 'bert')
-        
-        train_loader, valid_loader = trainer.create_data_loaders(
-            train_data, valid_data, tokenizer
+
+    @staticmethod
+    def _model_types(model_type):
+        if model_type not in ('bert', 'gpt', 'both'):
+            raise ValueError(f'Unknown model type: {model_type}')
+        return ('bert', 'gpt') if model_type == 'both' else (model_type,)
+
+    def get_tokenizer(self, model_type='bert'):
+        self._model_types(model_type)
+        settings = self.config.bert_config if model_type == 'bert' else self.config.gpt_config
+        tokenizer = AutoTokenizer.from_pretrained(
+            settings.get('tokenizer_name', settings['model_name']),
+            local_files_only=self.config.random_init,
         )
-        
-        num_training_steps = len(train_loader) * self.config.bert_config['num_epochs']
-        optimizer = trainer.setup_optimizer(model, num_training_steps)
-        
-        loss_fn = CustomLoss.bert_loss
-        
-        best_loss = float('inf')
-        patience_counter = 0
-        
-        for epoch in range(self.config.bert_config['num_epochs']):
-            print(f"Epoch {epoch + 1}/{self.config.bert_config['num_epochs']}")
-            
-            train_loss = trainer.train_epoch(
-                model, train_loader, optimizer, loss_fn, self.device
-            )
-            
-            valid_loss, valid_predictions = trainer.validate_model(
-                model, valid_loader, self.device
-            )
-            
-            print(f"Train Loss: {train_loss:.4f}, Valid Loss: {valid_loss:.4f}")
-            
-            if valid_loss < best_loss:
-                best_loss = valid_loss
-                patience_counter = 0
-                
-                model_path = self.config.get_model_path(
-                    'bert', f'fold_{fold}_best_model.pt'
-                )
-                trainer.save_model(model, optimizer, epoch, valid_loss, model_path)
-                
-                predictions_path = self.config.get_output_path(
-                    'predictions', f'bert_fold_{fold}_predictions.csv'
-                )
-                valid_predictions.to_csv(predictions_path, index=False)
-            else:
-                patience_counter += 1
-            
-            if patience_counter >= self.config.training_config['early_stopping_patience']:
-                print(f"Early stopping at epoch {epoch + 1}")
-                break
-        
-        return {
-            'model': model,
-            'best_loss': best_loss,
-            'predictions': valid_predictions
-        }
-    
-    def train_gpt_model(self, fold: int) -> Dict[str, Any]:
-        """Train GPT model for a specific fold."""
-        print(f"Training GPT model for fold {fold}...")
-        
+        tokenizer.padding_side = 'right'
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        if tokenizer.pad_token is None:
+            raise ValueError('Tokenizer needs a padding or EOS token')
+        return tokenizer
+
+    def train_bert_model(self, fold):
+        return self._train_model('bert', fold)
+
+    def train_gpt_model(self, fold):
+        return self._train_model('gpt', fold)
+
+    def _train_model(self, model_type, fold):
         train_data, valid_data = self.data_loader.load_fold_data(fold)
-        tokenizer = self.get_tokenizer('gpt')
-        
-        model = GPTClassifier(self.config).to(self.device)
-        trainer = ModelTrainer(self.config, 'gpt')
-        
-        train_loader, valid_loader = trainer.create_data_loaders(
-            train_data, valid_data, tokenizer
-        )
-        
-        num_training_steps = len(train_loader) * self.config.gpt_config['num_epochs']
-        optimizer = trainer.setup_optimizer(model, num_training_steps)
-        
-        loss_fn = CustomLoss.gpt_loss
-        
-        best_loss = float('inf')
-        patience_counter = 0
-        
-        for epoch in range(self.config.gpt_config['num_epochs']):
-            print(f"Epoch {epoch + 1}/{self.config.gpt_config['num_epochs']}")
-            
-            train_loss = trainer.train_epoch(
-                model, train_loader, optimizer, loss_fn, self.device
-            )
-            
-            valid_loss, valid_predictions = trainer.validate_model(
-                model, valid_loader, self.device
-            )
-            
-            print(f"Train Loss: {train_loss:.4f}, Valid Loss: {valid_loss:.4f}")
-            
+        tokenizer = self.get_tokenizer(model_type)
+        trainer = ModelTrainer(self.config, model_type)
+        settings = trainer.model_config
+        if settings['num_epochs'] < 1:
+            raise ValueError('num_epochs must be positive')
+        model_class = BERTClassifier if model_type == 'bert' else GPTClassifier
+        model = model_class(self.config).to(self.device)
+        train_loader, valid_loader = trainer.create_data_loaders(train_data, valid_data, tokenizer)
+        steps = math.ceil(len(train_loader) / settings['gradient_accumulation_steps']) * settings['num_epochs']
+        optimizer = trainer.setup_optimizer(model, steps)
+        loss_fn = CustomLoss.bert_loss if model_type == 'bert' else CustomLoss.gpt_loss
+        best_loss, patience = float('inf'), 0
+        model_path = self.config.get_model_path(model_type, f'fold_{fold}_best_model.pt')
+        predictions_path = self.config.get_output_path('predictions', f'{model_type}_fold_{fold}_predictions.csv')
+        for epoch in range(settings['num_epochs']):
+            train_loss = trainer.train_epoch(model, train_loader, optimizer, loss_fn, self.device)
+            valid_loss, valid_predictions = trainer.validate_model(model, valid_loader, self.device)
+            print(f'{model_type} fold {fold}, epoch {epoch + 1}: train={train_loss:.4f}, valid={valid_loss:.4f}')
+            if not np.isfinite(valid_loss):
+                raise ValueError('Non-finite validation loss')
             if valid_loss < best_loss:
-                best_loss = valid_loss
-                patience_counter = 0
-                
-                model_path = self.config.get_model_path(
-                    'gpt', f'fold_{fold}_best_model.pt'
-                )
+                best_loss, patience = valid_loss, 0
                 trainer.save_model(model, optimizer, epoch, valid_loss, model_path)
-                
-                predictions_path = self.config.get_output_path(
-                    'predictions', f'gpt_fold_{fold}_predictions.csv'
-                )
-                valid_predictions.to_csv(predictions_path, index=False)
+                best_predictions = valid_predictions
+                best_predictions.to_csv(predictions_path, index=False)
             else:
-                patience_counter += 1
-            
-            if patience_counter >= self.config.training_config['early_stopping_patience']:
-                print(f"Early stopping at epoch {epoch + 1}")
+                patience += 1
+            if patience >= self.config.training_config['early_stopping_patience']:
                 break
-        
-        return {
-            'model': model,
-            'best_loss': best_loss,
-            'predictions': valid_predictions
-        }
-    
-    def train_all_models(self, model_type: str = 'both') -> Dict[str, Any]:
-        """Train models for all folds."""
-        print(f"Training {model_type} models for all folds...")
-        
+        trainer.load_model(model, model_path)
+        # Retain the public single-fold return API without holding every fold on the GPU.
+        return {'model': model.cpu(), 'best_loss': best_loss, 'predictions': best_predictions}
+
+    def train_all_models(self, model_type='both'):
+        selected = self._model_types(model_type)
+        config_path = Path(self.config.get_model_path(filename='config.json'))
+        config_path.write_text(json.dumps(self.config.to_dict(), indent=2))
         results = {}
-        
         for fold in range(1, self.config.n_folds + 1):
-            print(f"\n{'='*50}")
-            print(f"Training Fold {fold}/{self.config.n_folds}")
-            print(f"{'='*50}")
-            
-            fold_results = {}
-            
-            if model_type in ['bert', 'both']:
-                fold_results['bert'] = self.train_bert_model(fold)
-            
-            if model_type in ['gpt', 'both']:
-                fold_results['gpt'] = self.train_gpt_model(fold)
-            
-            results[f'fold_{fold}'] = fold_results
-        
+            results[f'fold_{fold}'] = {}
+            for name in selected:
+                result = self._train_model(name, fold)
+                del result['model']
+                result['checkpoint'] = self.config.get_model_path(name, f'fold_{fold}_best_model.pt')
+                results[f'fold_{fold}'][name] = result
         self.models = results
         return results
-    
-    def evaluate_models(self) -> Dict[str, Any]:
-        """Evaluate all trained models."""
-        print("Evaluating models...")
-        
-        evaluation_results = {}
-        
-        for fold_name, fold_results in self.models.items():
-            print(f"\nEvaluating {fold_name}...")
-            
-            fold_evaluations = {}
-            
-            for model_name, model_results in fold_results.items():
-                predictions = model_results['predictions']
-                
-                valid_data, _ = self.data_loader.load_fold_data(int(fold_name.split('_')[1]))
-                ground_truth = valid_data[['id', 'target'] + self.config.identity_columns]
-                
-                eval_path = self.config.get_output_path(
-                    'evaluations', f'{model_name}_{fold_name}_evaluation'
-                )
-                
-                evaluation = self.evaluator.evaluate_predictions(
-                    predictions, ground_truth, eval_path
-                )
-                
-                fold_evaluations[model_name] = evaluation
-                print(f"{model_name} - Final Metric: {evaluation['final_metric']:.5f}")
-            
-            evaluation_results[fold_name] = fold_evaluations
-        
-        return evaluation_results
-    
-    def generate_test_predictions(self, model_type: str = 'bert') -> pd.DataFrame:
-        """Generate predictions on test data."""
-        print(f"Generating test predictions with {model_type} models...")
-        
-        test_data = self.data_loader.load_test_data()
-        tokenizer = self.get_tokenizer(model_type)
-        
-        all_predictions = []
-        
+
+    def evaluate_models(self, model_type='both'):
+        evaluations = {}
         for fold in range(1, self.config.n_folds + 1):
-            print(f"Generating predictions for fold {fold}...")
-            
-            if model_type == 'bert':
-                model = BERTClassifier(self.config).to(self.device)
-            else:
-                model = GPTClassifier(self.config).to(self.device)
-            
-            model_path = self.config.get_model_path(
-                model_type, f'fold_{fold}_best_model.pt'
+            fold_results = {}
+            for name in self._model_types(model_type):
+                predictions_path = Path(self.config.get_output_path('predictions', f'{name}_fold_{fold}_predictions.csv'))
+                if not predictions_path.exists():
+                    continue
+                _, valid_data = self.data_loader.load_fold_data(fold)
+                ground_truth = valid_data[['id', 'target'] + self.config.identity_columns]
+                eval_path = self.config.get_output_path('evaluations', f'{name}_fold_{fold}_evaluation')
+                fold_results[name] = self.evaluator.evaluate_predictions(
+                    pd.read_csv(predictions_path), ground_truth, eval_path
+                )
+            if fold_results:
+                evaluations[f'fold_{fold}'] = fold_results
+        if not evaluations:
+            raise FileNotFoundError('No saved validation predictions; train models first.')
+        return evaluations
+
+    def generate_test_predictions(self, model_type='bert'):
+        if model_type == 'both':
+            frames = [self.generate_test_predictions(name) for name in self._model_types(model_type)]
+            submission = frames[0].copy()
+            submission['prediction'] = np.mean([frame['prediction'].to_numpy() for frame in frames], axis=0)
+        else:
+            self._model_types(model_type)
+            test_data = self.data_loader.load_test_data()
+            tokenizer = self.get_tokenizer(model_type)
+            trainer = ModelTrainer(self.config, model_type)
+            loader = TorchDataLoader(
+                ToxicCommentDataset(test_data, tokenizer, self.config.max_length),
+                batch_size=trainer.model_config['valid_batch_size'], shuffle=False,
+                num_workers=self.config.training_config['num_workers'],
             )
-            
-            if os.path.exists(model_path):
-                trainer = ModelTrainer(self.config, model_type)
-                model = trainer.load_model(model, model_path)
-                
+            fold_predictions = []
+            for fold in range(1, self.config.n_folds + 1):
+                model_path = self.config.get_model_path(model_type, f'fold_{fold}_best_model.pt')
+                if not Path(model_path).exists():
+                    raise FileNotFoundError(f'Missing fold checkpoint: {model_path}')
+                model_class = BERTClassifier if model_type == 'bert' else GPTClassifier
+                model = trainer.load_model(model_class(self.config), model_path).to(self.device)
                 model.eval()
-                fold_predictions = []
-                
+                scores = []
                 with torch.no_grad():
-                    for _, row in test_data.iterrows():
-                        text = str(row['comment_text'])
-                        
-                        if model_type == 'bert':
-                            token_ids = self._tokenize_bert_text(text, tokenizer)
-                        else:
-                            token_ids = self._tokenize_gpt_text(text, tokenizer)
-                        
-                        input_ids = torch.tensor(token_ids, dtype=torch.long).unsqueeze(0).to(self.device)
-                        
-                        if model_type == 'bert':
-                            prediction, _ = model(input_ids)
-                        else:
-                            prediction = model(input_ids)
-                        
-                        prediction = torch.sigmoid(prediction).cpu().item()
-                        fold_predictions.append(prediction)
-                
-                all_predictions.append(fold_predictions)
-            else:
-                print(f"Model not found for fold {fold}: {model_path}")
-        
-        if all_predictions:
-            avg_predictions = np.mean(all_predictions, axis=0)
-            
-            submission = pd.DataFrame({
-                'id': test_data['id'],
-                'prediction': avg_predictions
-            })
-            
-            submission_path = self.config.get_output_path(
-                'submissions', f'{model_type}_submission.csv'
-            )
-            submission.to_csv(submission_path, index=False)
-            print(f"Submission saved to: {submission_path}")
-            
-            return submission
-        else:
-            print("No predictions generated")
-            return pd.DataFrame()
-    
-    def _tokenize_bert_text(self, text: str, tokenizer) -> List[int]:
-        """Tokenize text for BERT model."""
-        if hasattr(tokenizer, 'encode_plus'):
-            encoding = tokenizer.encode_plus(
-                text,
-                max_length=self.config.max_length,
-                padding='max_length',
-                truncation=True,
-                return_tensors='np'
-            )
-            return encoding['input_ids'].flatten().tolist()
-        else:
-            tokens = tokenizer.tokenize(text)
-            tokens = ["[CLS]"] + tokens[:self.config.max_length-2] + ["[SEP]"]
-            return tokenizer.convert_tokens_to_ids(tokens)
-    
-    def _tokenize_gpt_text(self, text: str, tokenizer) -> List[int]:
-        """Tokenize text for GPT model."""
-        if hasattr(tokenizer, 'encode_plus'):
-            encoding = tokenizer.encode_plus(
-                text,
-                max_length=self.config.max_length,
-                padding='max_length',
-                truncation=True,
-                return_tensors='np'
-            )
-            return encoding['input_ids'].flatten().tolist()
-        else:
-            return tokenizer.encode(text, max_length=self.config.max_length, truncation=True)
-    
-    def run_full_pipeline(self, model_type: str = 'both') -> Dict[str, Any]:
-        """Run the complete pipeline."""
-        print("Starting full pipeline...")
-        
+                    for batch in loader:
+                        outputs = model(batch['input_ids'].to(self.device), batch['attention_mask'].to(self.device))
+                        logits = outputs[0] if model_type == 'bert' else outputs
+                        scores.extend(prediction_scores(logits, model_type).cpu().tolist())
+                fold_predictions.append(scores)
+                del model
+            submission = pd.DataFrame({'id': test_data['id'], 'prediction': np.mean(fold_predictions, axis=0)})
+        path = self.config.get_output_path('submissions', f'{model_type}_submission.csv')
+        submission.to_csv(path, index=False)
+        print(f'Submission saved to: {path}')
+        return submission
+
+    def run_full_pipeline(self, model_type='both'):
         if not self.validate_setup():
-            raise RuntimeError("Setup validation failed")
-        
+            raise RuntimeError('Setup validation failed')
         self.process_data()
         self.train_all_models(model_type)
-        evaluation_results = self.evaluate_models()
-        
-        test_predictions = {}
-        if 'bert' in model_type or model_type == 'both':
-            test_predictions['bert'] = self.generate_test_predictions('bert')
-        
-        if 'gpt' in model_type or model_type == 'both':
-            test_predictions['gpt'] = self.generate_test_predictions('gpt')
-        
-        return {
-            'models': self.models,
-            'evaluations': evaluation_results,
-            'test_predictions': test_predictions
-        }
+        evaluations = self.evaluate_models(model_type)
+        submission = self.generate_test_predictions(model_type)
+        predictions = {model_type: submission}
+        if model_type == 'both':
+            predictions.update({name: pd.read_csv(self.config.get_output_path('submissions', f'{name}_submission.csv'))
+                                for name in ('bert', 'gpt')})
+        return {'models': self.models, 'evaluations': evaluations, 'test_predictions': predictions}

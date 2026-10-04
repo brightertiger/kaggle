@@ -1,40 +1,38 @@
-import pandas as pd
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-import seaborn as sns
-import matplotlib.pyplot as plt
+
 
 def calculate_accuracy(predictions, targets):
-    pred_labels = np.argmax(predictions, axis=1)
-    return accuracy_score(targets, pred_labels)
+    return accuracy_score(targets, np.argmax(predictions, axis=1))
+
 
 def generate_classification_report(predictions, targets, class_names=None):
-    pred_labels = np.argmax(predictions, axis=1)
-    return classification_report(targets, pred_labels, target_names=class_names)
+    return classification_report(targets, np.argmax(predictions, axis=1),
+                                 labels=np.arange(predictions.shape[1]),
+                                 target_names=class_names, zero_division=0)
+
 
 def plot_confusion_matrix(predictions, targets, class_names=None, save_path=None):
-    pred_labels = np.argmax(predictions, axis=1)
-    cm = confusion_matrix(targets, pred_labels, normalize='true')
-    
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, cmap='Blues', 
-                xticklabels=class_names, yticklabels=class_names)
-    plt.title('Confusion Matrix')
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
-    
+    # Plotting is optional at runtime and does not initialize a GUI during imports.
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    cm = confusion_matrix(targets, np.argmax(predictions, axis=1),
+                          labels=np.arange(predictions.shape[1]), normalize='true')
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ticks = class_names if class_names is not None else 'auto'
+    sns.heatmap(cm, annot=True, cmap='Blues', xticklabels=ticks, yticklabels=ticks, ax=ax)
+    ax.set(title='Confusion Matrix', xlabel='Predicted', ylabel='Actual')
+    fig.tight_layout()
     if save_path:
-        plt.savefig(save_path)
-    plt.show()
+        fig.savefig(save_path)
+    else:
+        plt.show()
+    plt.close(fig)
 
-def evaluate_model_performance(predictions, targets, class_names=None):
+
+def evaluate_model_performance(predictions, targets, class_names=None, save_path=None):
     accuracy = calculate_accuracy(predictions, targets)
     report = generate_classification_report(predictions, targets, class_names)
-    
-    print(f"Model Accuracy: {accuracy:.4f}")
-    print("\nClassification Report:")
-    print(report)
-    
-    plot_confusion_matrix(predictions, targets, class_names)
-    
+    print(f'Model Accuracy: {accuracy:.4f}\n\nClassification Report:\n{report}')
+    plot_confusion_matrix(predictions, targets, class_names, save_path)
     return accuracy, report

@@ -1,19 +1,24 @@
 import pandas as pd
-import numpy as np
 from sklearn.preprocessing import LabelEncoder
 
 
 def clean_date_format(date_str):
     """Convert date from DD/MM/YY format to YYYY-MM-DD format."""
-    day, month, year = date_str.split('/')
-    return f'20{year}-{month}-{day}'
+    if pd.isna(date_str):
+        raise ValueError('Campaign dates must not be missing')
+    value = str(date_str)
+    if '/' in value:
+        fmt = '%d/%m/%Y' if len(value.split('/')[-1]) == 4 else '%d/%m/%y'
+    else:
+        fmt = '%Y-%m-%d'
+    return pd.to_datetime(value, format=fmt).strftime('%Y-%m-%d')
 
 
 def encode_categorical_features(data, features):
     """Encode categorical features using LabelEncoder."""
     for feature in features:
         encoder = LabelEncoder()
-        data[feature] = encoder.fit_transform(data[feature].fillna('none'))
+        data[feature] = encoder.fit_transform(data[feature].astype('string').fillna('none'))
     return data
 
 
@@ -31,9 +36,12 @@ def create_train_validation_split(train_path, validation_campaign_id=13):
     train = pd.read_csv(train_path)
     valid = train[train['campaign_id'] == validation_campaign_id][['id', 'redemption_status']]
     train = train[train['campaign_id'] != validation_campaign_id][['id', 'redemption_status']]
+    for name, split in [('train', train), ('validation', valid)]:
+        if set(split['redemption_status'].dropna()) != {0, 1} or split['redemption_status'].isna().any():
+            raise ValueError(f'{name} split must contain both binary target classes; check validation_campaign_id')
     return train, valid
 
 
 def load_driver_data(driver_path):
     """Load and prepare driver data."""
-    return pd.read_csv(driver_path).drop(['coupon_id', 'campaign_id'], axis=1)
+    return pd.read_csv(driver_path)[['id', 'customer_id']]

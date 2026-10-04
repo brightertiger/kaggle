@@ -1,8 +1,11 @@
 import torch
+import torch.nn as nn
+from dataclasses import replace
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from torch.utils.data import DataLoader
-from typing import List, Optional
+from typing import Optional
 from .config import Config
 from .models import create_model
 from .data_utils import create_test_loader
@@ -18,10 +21,12 @@ class ModelPredictor:
         
         with torch.no_grad():
             for sample in test_loader:
-                sound = sample.float().squeeze().to(self.device)
-                preds = model(sound)
-                preds, _ = torch.max(preds, dim=0)
-                predictions.append(preds.cpu().data.numpy())
+                sound = sample.float().squeeze(0).to(self.device)
+                # Bound inference memory while retaining maximum evidence per class.
+                chunk_predictions = [model(chunk).amax(dim=0) for chunk in
+                                     sound.split(self.config.training.batch_size)]
+                preds = torch.stack(chunk_predictions).amax(dim=0)
+                predictions.append(preds.cpu().numpy())
         
         return np.vstack(predictions)
 
@@ -34,11 +39,12 @@ class ModelPredictor:
         for fold in range(1, self.config.training.num_folds + 1):
             print(f"Predicting fold {fold}...")
             
-            model = create_model(self.config, model_type)
+            inference_config = replace(self.config, model=replace(self.config.model, pretrained=False))
+            model = create_model(inference_config, model_type)
             model = model.to(self.device)
             
-            model_path = f"{self.config.data.model_save_path}/model_fold_{fold}.pt"
-            checkpoint = torch.load(model_path, map_location=self.device)
+            model_path = f"{self.config.data.model_save_path}/{model_type}/model_fold_{fold}.pt"
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
             model.load_state_dict(checkpoint['model_state_dict'])
             
             fold_predictions = self.predict_fold(model, test_loader)
@@ -46,9 +52,10 @@ class ModelPredictor:
             
             model.cpu()
             del model
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
-        predictions = np.mean(all_predictions, axis=0)
+        predictions = torch.from_numpy(np.mean(all_predictions, axis=0)).sigmoid().numpy()
         
         result_df = test_data[['recording_id']].copy()
         prediction_columns = [f's{i}' for i in range(self.config.model.num_classes)]
@@ -67,5 +74,6 @@ def generate_predictions(config: Config, model_type: str = "resnet",
             output_name += "_tta"
     
     output_path = f"{config.data.predictions_path}/{output_name}.csv"
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     predictions.to_csv(output_path, index=False)
     print(f"Predictions saved to {output_path}")

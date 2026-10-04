@@ -1,355 +1,249 @@
-# Avito Deal Probability Prediction
+# [Avito Demand Prediction Challenge](https://www.kaggle.com/competitions/avito-demand-prediction-challenge)
 
-A comprehensive machine learning solution for the [Avito Demand Prediction Challenge](https://www.kaggle.com/c/avito-demand-prediction), which aims to predict the probability that an advertisement will result in a deal based on various features including text, categorical, and user behavior data.
+**Final rank: 21 / 1,868 teams · Silver medal**
 
-## 🏆 Competition Overview
+I’m Ujjwal Singh Rao, a Kaggle Master. My approach combined Russian listing
+text, seller activity, structured attributes, and image signals in a staged ensemble.
+Rank source: [portfolio competition table](../README.md).
 
-**Challenge**: Predict the probability that an advertisement on Avito will result in a deal
-- **Target**: `deal_probability` (continuous value between 0 and 1)
-- **Evaluation Metric**: Root Mean Squared Error (RMSE)
-- **Dataset**: ~1.5M advertisements with text, categorical, and user features
-- **Domain**: Russian online classified advertisements marketplace
+This folder contains my historical competition scripts and a runnable, compact
+TF-IDF/user-feature Ridge pipeline with a linear blend. The compact pipeline
+explains and exercises part of the method; it does not reproduce the final team submission.
 
-**Business Impact**: Helping Avito optimize their marketplace by predicting advertisement success rates, enabling better pricing strategies and user experience improvements.
+## Problem
 
-## 🚀 Key Features
+I predicted `deal_probability`, a continuous target between zero and one for
+an advertisement on Avito. The evaluation metric was root mean squared error (RMSE).
 
-- **Multi-Level Ensemble Architecture**: Level-1 feature-specific models + Level-2 ensemble blending
-- **Advanced Text Processing**: TF-IDF vectorization with Russian language optimization
-- **Comprehensive Feature Engineering**: 60+ features from text, categorical, and user behavior data
-- **Cross-Validation Strategy**: 5-fold stratified cross-validation for robust evaluation
-- **Modular Pipeline Design**: Clean, maintainable codebase following software engineering best practices
+The difficulty was combining signals with very different representations:
+free-form Russian text, sparse category combinations, seller history, and photographs.
+Missing fields and repeated listings made both feature construction and validation important.
 
-## 📁 Project Structure
+## Data
 
+The main inputs are `train.csv` and `test.csv`, with one advertisement per row.
+Training adds the `deal_probability` target; `item_id` identifies each prediction.
+
+| Input fields | Representation and role |
+| --- | --- |
+| `title`, `description` | Russian text, with missing values, punctuation, and mixed alphabets |
+| `param_1`, `param_2`, `param_3` | Category-dependent attributes; also concatenated as text |
+| `region`, `city`, category names, `user_type` | Location and marketplace context |
+| `user_id`, `item_seq_number` | Seller identity and listing sequence |
+| `price`, `activation_date` | Numeric and temporal context |
+| `image`, `image_top_1` | Photograph identifier and supplied image category |
+
+`train_active.csv` and `test_active.csv` supply additional unlabeled listings.
+I use them for seller diversity and category-frequency aggregates.
+The runnable pipeline reads their listing attributes and titles, without requiring
+`image_top_1`; image-category frequencies come from the main train/test tables.
+
+The historical renewal scripts also use `periods_train.csv` and `periods_test.csv`.
+The image branch expects extracted JPEGs, while the text CNNs expect fastText vectors.
+Those files, fitted weights, and teammate prediction tables are not included here.
+
+Repeated sellers and duplicate listing content can cross random folds.
+Target-derived encodings need particular care: a global aggregate can reveal validation labels.
+
+## Approach
+
+### Validation and prediction bookkeeping
+
+The runnable implementation uses shuffled K-fold splits: five folds by default,
+with random state 2017. These are ordinary regression folds, not stratified folds.
+Each base model writes one out-of-fold prediction per training item and averages
+its fold predictions for the test items.
+
+I align labels, feature rows, and predictions by `item_id`. Missing or duplicate
+prediction IDs fail explicitly, and the submission follows the input test order.
+
+The linear blender reuses these folds over the base out-of-fold predictions.
+Its reported RMSE is a **stacking diagnostic**, not an independent nested-CV estimate:
+base models that generated its training features can have seen its validation labels.
+The vocabulary and unlabeled seller aggregates also use test covariates, following
+the transductive competition approach.
+
+### Preprocessing and text features
+
+I lowercase and normalize title/description text while preserving Cyrillic letters,
+separate digits, replace punctuation, and give missing text an explicit placeholder.
+Russian stop words are filtered during TF-IDF vectorization.
+
+The text Ridge model combines title and description unigram/bigram TF-IDF with
+count-vectorized parameter strings. The description vocabulary is capped at 50,000
+features; title vocabulary remains uncapped. Ridge uses alpha 20 by default.
+Sparse matrices keep the text representation practical without pretrained downloads.
+
+I also generate title statistics: word and character counts, punctuation, capitalization,
+Russian-vowel presence, English characters, and stop-word counts.
+Historical “positive/negative” word counts are target-associated lexicons, not a
+pretrained sentiment model. They are generated for inspection, use global training
+labels, and are **not consumed by the runnable models**. They need fold-local fitting
+before they can safely become model inputs.
+
+### Seller and structured features
+
+Seller features count distinct titles, categories, and parameters, plus missing fields.
+I cap these aggregates at their 70th percentile, standardize them, and fit a separate
+Ridge model with alpha 0.00000001. Constant columns become zero instead of NaN.
+
+The feature stage also writes category/city, seller, parameter-combination, and
+image-category counts, plus activation weekday. These are retained feature outputs;
+the compact Ridge blend consumes only text and seller features.
+
+In the historical solution, relative price, renewal, duplicate, encoded-category,
+item, and text-SVD features supported the larger tabular models.
+
+### Model diversity and blending
+
+The historical model tree contains sparse Ridge models, LightGBM variants, text CNNs
+with fastText and categorical embeddings, and a VGG16 image branch.
+Image predictions and teammate predictions were additional ensemble inputs.
+Linear blending and a LightGBM stacker combined those signals at later levels.
+
+The runnable path preserves the migrated text Ridge + seller Ridge + linear regression
+blend. It clips final predictions to the valid probability interval and saves CSVs.
+It does not serialize fitted estimators or provide an inference service for unseen listings.
+
+```mermaid
+flowchart TD
+    A[Main and active listing CSVs] --> B[ID validation and shuffled folds]
+    B --> C[Clean text / TF-IDF / parameter counts]
+    B --> D[Seller diversity / missingness / normalization]
+    B --> E[Count / title / weekday feature files]
+    C --> F[Text Ridge: OOF and test predictions]
+    D --> G[Seller Ridge: OOF and test predictions]
+    F --> H[Linear blend on OOF features]
+    G --> H
+    H --> I[Average test predictions / clip / submission.csv]
+    E -. historical extensions .-> J[LightGBM / CNN / image and team ensemble]
 ```
+
+## What mattered most
+
+I built around these ideas; the archive does not contain a reliable ablation table,
+so I do not attach numerical score gains to individual components.
+
+- Sparse text models captured listing content directly and supplied useful stacking inputs.
+- Active listings added seller context beyond the advertisement being scored.
+- Relative price and category combinations represented marketplace context for tabular models.
+- Text, tabular, and image models offered different views of the same listing.
+- Out-of-fold predictions made the staged ensemble possible; ID alignment made it trustworthy.
+
+## Repository layout
+
+```text
 avito/
-├── main.py              # Main entry point with CLI interface
-├── example_usage.py     # Usage demonstrations and examples
-├── requirements.txt     # Python dependencies
-├── README.md           # This file
-├── src/                # Source code package
-│   ├── __init__.py     # Package initialization
-│   ├── config.py       # Centralized configuration management
-│   ├── data_utils.py   # Data loading and preprocessing utilities
-│   ├── feature_engineering.py # Feature generation and text processing
-│   ├── models.py       # Model architectures and training logic
-│   └── pipeline.py     # Main training pipeline orchestration
-├── features/           # Original feature engineering scripts (preserved)
-├── model/              # Original model scripts (preserved)
-└── data/               # Original data processing scripts (preserved)
+├── README.md                  # Solution narrative, scope, and run instructions
+├── main.py                    # CLI for the runnable pipeline stages
+├── example_usage.py           # Programmatic pipeline example with configurable paths
+├── dry_run.py                 # Synthetic CSV generation and end-to-end regression checks
+├── requirements.txt           # Dependencies for the runnable Python 3.11+ pipeline
+├── .gitignore                 # Local datasets, outputs, and Python caches
+├── src/
+│   ├── __init__.py            # Package marker
+│   ├── config.py              # Model settings and configurable artifact paths
+│   ├── data_utils.py          # CSV loading, folds, validation, ID-aligned joins
+│   ├── feature_engineering.py # Text, count, seller, and weekday features
+│   ├── models.py              # Sparse/user Ridge, OOF predictions, linear blend
+│   └── pipeline.py            # Orchestration, evaluation, submission, feature inventory
+├── features/                  # Historical feature scripts; not CLI dependencies
+│   ├── count.py               # Categorical frequency aggregates
+│   ├── date.py                # Activation weekday
+│   ├── duplicate.py           # Duplicate listing signals
+│   ├── encode.py              # Prediction-based categorical encodings
+│   ├── item.py                # Listing/seller item aggregates
+│   ├── relative.py            # Price relative to group averages
+│   ├── renew.py               # Listing renewals from period tables
+│   ├── svd.py                 # Low-dimensional sparse text decomposition
+│   ├── text_desc.py           # Description statistics and word signals
+│   ├── text_title.py          # Title statistics and word signals
+│   └── user.py                # Seller aggregates and Ridge scores
+└── model/                     # Historical multi-stage competition scripts
+    ├── preprocess/
+    │   ├── data_1.py          # First LightGBM feature matrix
+    │   ├── data_2.py          # Second LightGBM feature matrix
+    │   ├── data_3.py          # Third LightGBM feature matrix
+    │   ├── data_4.py          # Neural text/category feature tables
+    │   ├── data_5.py          # Image/category feature tables
+    │   ├── fasttext.py        # Text corpus preparation for embeddings
+    │   └── image.py           # Image resizing
+    ├── level-1/
+    │   ├── ridge_1.py         # Listing-text sparse Ridge
+    │   ├── ridge_2.py         # Attribute-string sparse Ridge
+    │   ├── image.py           # Image prediction blending
+    │   └── weak.py            # External weak-model feature assembly
+    ├── level-2/
+    │   ├── model_1.py         # Categorical LightGBM training
+    │   ├── model_2.py         # Alternative LightGBM training
+    │   ├── model_3.py         # Expanded LightGBM training
+    │   ├── model_4.py         # Text CNN and categorical embeddings
+    │   ├── model_5.py         # Alternative text CNN
+    │   ├── model_6.py         # VGG16 and categorical image model
+    │   ├── score_1.py         # First LightGBM scoring
+    │   ├── score_2.py         # Second LightGBM scoring
+    │   ├── score_3.py         # Third LightGBM scoring
+    │   ├── score_4.py         # First text CNN scoring
+    │   ├── score_5.py         # Second text CNN scoring
+    │   ├── score_6.py         # Image model scoring
+    │   └── blend.py           # Intermediate prediction blend
+    └── level-3/
+        ├── blend.py           # Final linear blend with teammate predictions
+        └── stack.py           # LightGBM stack with prediction summary features
 ```
 
-## 🛠️ Installation
+## How to run
 
-1. **Clone the repository**:
+Install the compact pipeline dependencies from this folder:
 ```bash
-git clone <repository-url>
-cd avito
+python -m pip install -r requirements.txt
 ```
 
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
+Place the competition CSVs in a directory with this layout:
 
-3. **Prepare data**:
-   - Download competition data from Kaggle
-   - Place files in `../../data/download/` directory:
-     - `train.csv`
-     - `test.csv`
-     - `train_active.csv`
-     - `test_active.csv`
-
-## 📊 Data Preparation
-
-### Dataset Structure
-```
+```text
 data/
-├── download/
-│   ├── train.csv           # Training data with deal_probability
-│   ├── test.csv            # Test data for predictions
-│   ├── train_active.csv    # Active user data
-│   └── test_active.csv     # Active user data for test
-└── data/
-    ├── files/              # Cross-validation folds
-    └── features/           # Generated feature files
+├── train.csv                  # Listing schema plus deal_probability
+├── test.csv                   # Listing schema without target
+├── train_active.csv           # Additional unlabeled listing attributes and titles
+└── test_active.csv            # Additional unlabeled listing attributes and titles
 ```
 
-### Create Cross-Validation Folds
 ```bash
-python main.py --step preprocess
+python main.py --data-dir ./data --output-dir ./output --step all
+python main.py --help
+python main.py --data-dir ./data --output-dir ./output --step evaluate
 ```
 
-This creates 5-fold cross-validation splits with consistent random state for reproducibility.
+Individual stages are `preprocess`, `features`, `train`, `evaluate`, and `submission`.
+Run preprocessing and features before training, and training before evaluation/submission.
+Use the same paths, fold count, and random state across separate stage invocations.
+`--features-dir` and `--model-dir` override their defaults under the output directory;
+`--n-folds` and `--random-state` control the splits.
+The model directory holds fold IDs and prediction CSVs, not saved fitted models.
 
-## 🏗️ Feature Engineering
+For a standalone synthetic CPU run:
 
-### Text Features (High Impact)
-- **TF-IDF Vectorization**: Title and description text with Russian stop words
-- **Text Statistics**: Word count, character count, punctuation ratio
-- **Language Detection**: Russian vs English character ratios
-- **Sentiment Analysis**: Positive/negative word counting based on target correlation
-- **Parameter Concatenation**: Combined categorical parameters as text features
-
-### User Behavior Features (Medium Impact)
-- **Activity Patterns**: Unique categories, titles, and parameters per user
-- **Engagement Metrics**: Number of listings and diversity metrics
-- **Data Quality**: Missing value patterns per user
-
-### Categorical Features (Medium Impact)
-- **Count Aggregations**: Category-city, category, user, parameter combinations
-- **Frequency Features**: Image top-1 and parameter frequency counts
-- **Hierarchical Aggregations**: Multi-level categorical combinations
-
-### Temporal Features (Low Impact)
-- **Day of Week**: Activation date weekday encoding
-
-### Feature Engineering Pipeline
-```python
-from src.feature_engineering import FeaturePipeline
-from src.config import Config
-
-config = Config()
-pipeline = FeaturePipeline(config)
-pipeline.generate_all_features()
-```
-
-## 🎯 Model Architecture
-
-### Level-1 Models (Feature-Specific)
-1. **Text Model**: Ridge Regression on TF-IDF features
-   - Title + Description + Parameters TF-IDF
-   - 50,000 features for description, unlimited for title
-   - Alpha: 20.0 for regularization
-
-2. **User Model**: Ridge Regression on user behavior features
-   - 4 normalized user features
-   - Alpha: 0.00000001 (minimal regularization)
-
-### Level-2 Ensemble (Meta-Learning)
-- **Linear Regression**: Blends Level-1 predictions
-- **Cross-validation**: 5-fold ensemble training
-- **Prediction Clipping**: Ensures outputs in [0,1] range
-
-### Model Configuration
-```python
-# Text Model Parameters
-TFIDF_MAX_FEATURES = 50000
-TFIDF_NGRAM_RANGE = (1, 2)
-RIDGE_ALPHA = 20.0
-
-# User Model Parameters  
-USER_FEATURES = 4
-USER_RIDGE_ALPHA = 0.00000001
-```
-
-## 🎯 Training Pipeline
-
-### Phase 1: Feature Engineering
-- Text preprocessing and TF-IDF vectorization
-- User behavior feature generation
-- Categorical aggregation features
-- Cross-validation fold creation
-
-### Phase 2: Level-1 Training
-- Text model training on each fold
-- User model training on each fold
-- Out-of-fold predictions generation
-
-### Phase 3: Level-2 Ensemble
-- Meta-feature creation from Level-1 predictions
-- Ensemble model training with cross-validation
-- Final prediction blending
-
-### Training Configuration
-```python
-# Cross-Validation
-N_FOLDS = 5
-RANDOM_STATE = 2017
-
-# Text Processing
-STOP_WORDS = 'russian'
-NGRAM_RANGE = (1, 2)
-MAX_FEATURES = 50000
-```
-
-## 🔧 Text Processing
-
-### Russian Language Optimization
-The solution includes specialized processing for Russian text:
-
-1. **Stop Words Removal**: Russian language stop words filtering
-2. **Character Analysis**: Russian vowel detection and English character counting
-3. **Sentiment Analysis**: Positive/negative word identification based on target correlation
-4. **Text Normalization**: Consistent preprocessing pipeline
-
-### Text Feature Pipeline
-```python
-class TextPreprocessor:
-    def clean_text(self, text: str) -> str:
-        # Lowercase conversion
-        # Digit separation
-        # Punctuation removal
-        # Whitespace normalization
-    
-    def has_russian_vowels(self, text: str) -> int:
-        # Russian vowel detection
-    
-    def count_english_chars(self, text: str) -> int:
-        # English character counting
-```
-
-## 📈 Results
-
-### Validation Performance
-- **Cross-Validation RMSE**: ~0.215-0.220 (5-fold CV)
-- **Model Architecture**: Multi-level ensemble significantly improved performance
-- **Key Insights**:
-  - Text features provide the strongest predictive signal
-  - User behavior features add valuable complementary information
-  - Ensemble approach reduces overfitting and improves generalization
-
-### Feature Importance Analysis
-1. **Text Features** (High): TF-IDF features from title and description
-2. **User Features** (Medium): User activity and behavior patterns
-3. **Count Features** (Medium): Categorical aggregation patterns
-4. **Date Features** (Low): Temporal patterns have limited impact
-
-### Model Performance Breakdown
-- **Text Model**: Primary predictive power from content analysis
-- **User Model**: Secondary signal from user behavior patterns
-- **Ensemble**: Combines strengths while reducing individual model weaknesses
-
-## 🚀 Usage
-
-### Quick Start
 ```bash
-# 1. Run complete pipeline
-python main.py --step all
-
-# 2. Or run individual steps
-python main.py --step preprocess    # Create cross-validation folds
-python main.py --step features      # Generate features
-python main.py --step train         # Train models
-python main.py --step evaluate      # Evaluate performance
-python main.py --step submission    # Generate submission
+python dry_run.py
 ```
 
-### Custom Configuration
-```bash
-# Custom configuration via command line
-python main.py --step all \
-    --n-folds 10 \
-    --random-state 42 \
-    --output-dir ./custom_output
-```
+This creates schema-compatible Russian listing CSVs under `sample_data/`, runs the
+compact pipeline, and writes `dry_run_output/submission.csv`.
+It checks missing fields, constant aggregates, OOF coverage, shuffled feature rows,
+submission ordering and bounds, and RMSE against aligned labels. No downloads are needed.
+Images are intentionally missing in this sample, which is valid for the CSV pipeline.
+Synthetic metrics are execution checks, not competition performance estimates.
 
-### Programmatic Usage
-```python
-from src.config import Config
-from src.pipeline import AvitoPipeline
+The archived `features/` and `model/` scripts are source references, not supported
+entry points: they retain historical paths/APIs and depend on external artifacts.
+Their LightGBM, Keras/TensorFlow, OpenCV/Pillow, plotting, and optional MulticoreTSNE
+runtime is separate from `requirements.txt`. The dry run does not exercise those branches
+or reconstruct the full image/text-CNN/team ensemble.
 
-# Custom configuration
-config = Config()
-config.avito.N_FOLDS = 10
-config.avito.RANDOM_STATE = 42
+## Lessons / what I'd do differently
 
-# Initialize pipeline
-pipeline = AvitoPipeline(config)
-
-# Run specific steps
-pipeline.preprocess_data()
-pipeline.generate_features()
-pipeline.train_models()
-submission = pipeline.generate_submission()
-```
-
-### Model Inference
-```python
-from src.models import TextModel, UserModel
-from src.config import Config
-
-# Load trained models (after training)
-config = Config()
-text_model = TextModel(config)
-user_model = UserModel(config)
-
-# Make predictions on new data
-text_predictions = text_model.predict(new_text_data)
-user_predictions = user_model.predict(new_user_data)
-```
-
-## 🔬 Technical Details
-
-### Cross-Validation Strategy
-- **Stratified Splits**: Maintains target distribution across folds
-- **Random State**: 2017 for reproducible results
-- **Validation**: Hold-out validation within each fold
-- **Out-of-fold Predictions**: Prevents data leakage
-
-### Text Processing Pipeline
-- **TF-IDF Vectorization**: Sublinear TF scaling, L2 normalization
-- **N-gram Range**: (1,2) for unigrams and bigrams
-- **Russian Stop Words**: Language-specific preprocessing
-- **Feature Selection**: Top 50,000 features by frequency
-
-### Optimization Strategy
-- **Ridge Regression**: L2 regularization for text features
-- **Feature Normalization**: Z-score normalization for user features
-- **Ensemble Blending**: Linear regression for meta-learning
-- **Prediction Clipping**: Ensures valid probability range
-
-### Hardware Requirements
-- **RAM**: 8GB+ system memory (for TF-IDF processing)
-- **Storage**: 10GB+ for dataset and feature files
-- **CPU**: Multi-core recommended for parallel processing
-
-## 📚 Key Learnings
-
-1. **Text Features Dominate**: TF-IDF features from title and description provide the strongest predictive signal
-2. **Multi-Level Ensembles**: Hierarchical ensemble architecture improves performance over single models
-3. **Language-Specific Processing**: Russian language optimization significantly improved text feature quality
-4. **Feature Engineering**: Careful feature creation and validation prevents data leakage
-5. **Cross-Validation**: Robust CV strategy essential for reliable performance estimation
-
-## 🎯 Business Impact
-
-### Marketplace Optimization
-- **Pricing Strategy**: Deal probability helps optimize advertisement pricing
-- **User Experience**: Better ad placement and visibility for high-probability deals
-- **Revenue Optimization**: Focus resources on advertisements with higher success rates
-
-### Technical Innovation
-- **Multi-Modal Features**: Combining text, categorical, and behavioral data
-- **Ensemble Architecture**: Hierarchical model combination for improved performance
-- **Scalable Pipeline**: Modular design enables easy feature addition and model updates
-
-## 🎯 Future Improvements
-
-- **Deep Learning**: Neural networks for text processing (BERT, RoBERTa)
-- **Image Features**: Computer vision models for advertisement images
-- **Temporal Modeling**: Time series features for user behavior patterns
-- **Advanced Ensembles**: Stacking with non-linear meta-learners
-- **Real-Time Inference**: Model optimization for production deployment
-
-## 📖 References
-
-- [Avito Demand Prediction Challenge](https://www.kaggle.com/c/avito-demand-prediction)
-- [TF-IDF Vectorization](https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html)
-- [Ridge Regression](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html)
-- [Cross-Validation Best Practices](https://scikit-learn.org/stable/modules/cross_validation.html)
-
-## 📄 License
-
-This project is for educational and research purposes. Please ensure compliance with competition rules and data usage policies.
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This solution achieved competitive performance in the Avito Demand Prediction Challenge through comprehensive feature engineering, multi-level ensemble architecture, and Russian language-specific text processing. The codebase has been refactored for clarity, maintainability, and reproducibility, making it suitable for portfolio demonstration and further research.
+- I would use a seller-aware or time-based holdout alongside random folds to assess generalization.
+- I would nest the stacking validation and fit every target-derived feature within its training split.
+- I would preserve fold manifests, embedding vocabularies, checkpoints, and teammate prediction provenance.
+- I would keep measured ablations separate from feature inventories and historical leaderboard results.

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from ast import literal_eval
 from torch.utils.data import Dataset, DataLoader
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 
 class DoodleDataset(Dataset):
@@ -15,8 +15,9 @@ class DoodleDataset(Dataset):
                  is_training: bool = True,
                  horizontal_flip_prob: float = 0.5):
         self.drawings = dataframe['drawing'].tolist()
-        self.key_ids = dataframe['key_id'].tolist()
+        self.key_ids = dataframe['key_id'].astype(str).tolist()
         self.category_mapping = category_mapping
+        self.label_to_index = {word: idx for idx, word in enumerate(category_mapping)}
         self.image_size = image_size
         self.is_training = is_training
         self.horizontal_flip_prob = horizontal_flip_prob
@@ -43,7 +44,7 @@ class DoodleDataset(Dataset):
         
         image = cv2.resize(image, (self.image_size, self.image_size))
         
-        if self.is_training and np.random.uniform() > self.horizontal_flip_prob:
+        if self.is_training and np.random.uniform() < self.horizontal_flip_prob:
             image = np.fliplr(image)
         
         image = np.atleast_3d(image)
@@ -59,7 +60,7 @@ class DoodleDataset(Dataset):
         sample = {'image': image, 'key_id': self.key_ids[idx]}
         
         if self.labels is not None:
-            label_idx = self.category_mapping.index(self.labels[idx])
+            label_idx = self.label_to_index[self.labels[idx]]
             sample['label'] = torch.tensor(label_idx, dtype=torch.long)
         
         return sample
@@ -89,7 +90,7 @@ def create_dataloaders(train_df: pd.DataFrame,
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=config.num_workers,
-        pin_memory=True
+        pin_memory=config.device.type == 'cuda'
     )
     
     valid_loader = DataLoader(
@@ -97,7 +98,7 @@ def create_dataloaders(train_df: pd.DataFrame,
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=config.num_workers,
-        pin_memory=True
+        pin_memory=config.device.type == 'cuda'
     )
     
     return train_loader, valid_loader
@@ -119,7 +120,7 @@ def create_test_dataloader(test_df: pd.DataFrame,
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=config.num_workers,
-        pin_memory=True
+        pin_memory=config.device.type == 'cuda'
     )
     
     return test_loader

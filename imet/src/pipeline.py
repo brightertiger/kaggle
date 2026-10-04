@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List
 
 from .config import Config
 from .data_utils import DataPreprocessor
@@ -23,7 +23,7 @@ class IMetPipeline:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(os.path.join(self.config.logs_dir, 'pipeline.log')),
+                logging.FileHandler(os.path.join(self.config.logs_dir, 'pipeline.log'), delay=True),
                 logging.StreamHandler()
             ]
         )
@@ -72,8 +72,7 @@ class IMetPipeline:
             score_files = self.scorer.score_all_folds()
             
             if not score_files:
-                self.logger.error("No score files generated. Check if models are trained.")
-                return
+                raise FileNotFoundError("No score files generated. Train models first.")
             
             submission_path = self.config.get_submission_path('submission')
             self.scorer.create_final_submission(score_files, submission_path)
@@ -93,13 +92,10 @@ class IMetPipeline:
             score_files = self.scorer.score_all_folds()
             
             if not score_files:
-                self.logger.error("No score files generated. Check if models are trained.")
-                return
+                raise FileNotFoundError("No score files generated. Train models first.")
             
             if len(score_files) != len(weights):
-                self.logger.error(f"Number of score files ({len(score_files)}) "
-                                f"must match number of weights ({len(weights)})")
-                return
+                raise ValueError("Provide one weight per selected fold")
             
             submission_path = self.config.get_submission_path('weighted_submission')
             self.scorer.create_weighted_submission(score_files, weights, submission_path)
@@ -153,7 +149,6 @@ class IMetPipeline:
         
         required_files = [
             self.config.train_csv_path,
-            self.config.subset_csv_path,
             self.config.sample_submission_path
         ]
         
@@ -183,7 +178,7 @@ class IMetPipeline:
         self.logger.info("✅ Setup validation passed")
         return True
     
-    def get_model_info(self) -> Dict[str, any]:
+    def get_model_info(self) -> Dict[str, Any]:
         model_info = {
             'model_name': self.config.model_name,
             'num_classes': self.config.num_classes,

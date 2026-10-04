@@ -12,7 +12,6 @@ class RAdam(Optimizer):
     def __init__(self, params, lr: float = 1e-3, betas: tuple = (0.9, 0.999), 
                  eps: float = 1e-8, weight_decay: float = 0):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        self.buffer = [[None, None, None] for _ in range(10)]
         super(RAdam, self).__init__(params, defaults)
 
     def __setstate__(self, state):
@@ -25,6 +24,7 @@ class RAdam(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
+            buffer = group.setdefault('buffer', [[None, None, None] for _ in range(10)])
             for p in group['params']:
                 if p.grad is None:
                     continue
@@ -47,11 +47,11 @@ class RAdam(Optimizer):
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
                 beta1, beta2 = group['betas']
 
-                exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
-                exp_avg.mul_(beta1).add_(1 - beta1, grad)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
 
                 state['step'] += 1
-                buffered = self.buffer[int(state['step'] % 10)]
+                buffered = buffer[int(state['step'] % 10)]
                 
                 if state['step'] == buffered[0]:
                     N_sma, step_size = buffered[1], buffered[2]
@@ -72,13 +72,13 @@ class RAdam(Optimizer):
                     buffered[2] = step_size
 
                 if group['weight_decay'] != 0:
-                    p_data_fp32.add_(-group['weight_decay'] * group['lr'], p_data_fp32)
+                    p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * group['lr'])
 
                 if N_sma >= 5:            
                     denom = exp_avg_sq.sqrt().add_(group['eps'])
-                    p_data_fp32.addcdiv_(-step_size, exp_avg, denom)
+                    p_data_fp32.addcdiv_(exp_avg, denom, value=-step_size)
                 else:
-                    p_data_fp32.add_(-step_size, exp_avg)
+                    p_data_fp32.add_(exp_avg, alpha=-step_size)
                 
                 p.data.copy_(p_data_fp32)
         

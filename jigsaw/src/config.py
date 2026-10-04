@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 import os
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 from dataclasses import dataclass, field
 
 
@@ -11,17 +10,18 @@ class Config:
     """Centralized configuration management for Jigsaw Toxic Comment Classification."""
     
     # Data paths
-    data_path: str = "../data"
-    model_path: str = "../model"
-    output_path: str = "../output"
+    data_path: str = "./data"
+    model_path: str = "./model"
+    output_path: str = "./output"
     
     # Model configuration
     random_seed: int = 42
     device: str = "cuda:0"
     
+    random_init: bool = False  # Use explicit backbone_config and local tokenizers.
+
     # Data processing
     max_length: int = 222
-    test_size: float = 0.2
     n_folds: int = 5
     
     # Identity columns for bias evaluation
@@ -45,12 +45,8 @@ class Config:
         'warmup_ratio': 0.05,
         'weight_decay': 0.01,
         'dropout': 0.1,
-        'hidden_size': 768,
         'gradient_accumulation_steps': 5,
         'max_grad_norm': 1.0,
-        'save_steps': 500,
-        'eval_steps': 500,
-        'logging_steps': 100
     })
     
     # GPT configuration
@@ -63,21 +59,16 @@ class Config:
         'warmup_ratio': 0.05,
         'weight_decay': 0.01,
         'dropout': 0.1,
-        'hidden_size': 768,
         'gradient_accumulation_steps': 5,
         'max_grad_norm': 1.0,
-        'save_steps': 500,
-        'eval_steps': 500,
-        'logging_steps': 100
     })
     
     # Training configuration
     training_config: Dict[str, Any] = field(default_factory=lambda: {
         'num_workers': 4,
         'pin_memory': True,
-        'drop_last': True,
+        'drop_last': False,
         'early_stopping_patience': 3,
-        'save_best_model': True,
         'mixed_precision': False
     })
     
@@ -160,7 +151,11 @@ class Config:
         """Update configuration from dictionary."""
         for key, value in config_dict.items():
             if hasattr(self, key):
-                setattr(self, key, value)
+                current = getattr(self, key)
+                if isinstance(current, dict) and isinstance(value, dict):
+                    current.update(value)
+                else:
+                    setattr(self, key, value)
             else:
                 print(f"⚠️ Unknown configuration key: {key}")
     
@@ -172,8 +167,8 @@ class Config:
             'output_path': self.output_path,
             'random_seed': self.random_seed,
             'device': self.device,
+            'random_init': self.random_init,
             'max_length': self.max_length,
-            'test_size': self.test_size,
             'n_folds': self.n_folds,
             'identity_columns': self.identity_columns,
             'aux_labels': self.aux_labels,

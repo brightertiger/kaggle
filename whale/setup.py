@@ -1,35 +1,35 @@
 from setuptools import setup, find_packages
+from pathlib import Path
 
-with open("README.md", "r", encoding="utf-8") as fh:
+ROOT = Path(__file__).resolve().parent
+
+with open(ROOT / "README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
+with open(ROOT / "requirements.txt", "r", encoding="utf-8") as fh:
     requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 
 setup(
     name="whale-identification",
     version="1.0.0",
     author="Ujjwal Rao",
-    author_email="ujjwal.rao@example.com",
     description="Advanced whale identification using deep learning and metric learning techniques",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/ujjwalrao/kaggle-whale-identification",
+    url="https://github.com/brightertiger/kaggle/tree/main/whale",
     packages=find_packages(),
+    py_modules=["main"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Scientific/Engineering :: Image Recognition",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.11",
     install_requires=requirements,
     extras_require={
         "dev": [

@@ -57,7 +57,7 @@ def advanced_usage_example():
     print(f"- Learning Rate: {config.LEARNING_RATE}")
     print(f"- Image Size: {config.IMAGE_SIZE}")
     
-    submission_df = pipeline.run_full_pipeline(model_name='efficientnet', skip_preprocessing=True)
+    submission_df = pipeline.run_full_pipeline(model_name='efficientnet', skip_preprocessing=False)
     
     return submission_df
 
@@ -72,6 +72,7 @@ def model_comparison_example():
     
     models_to_compare = ['resnet50', 'resnet101', 'inception']
     results = {}
+    IntracranialHemorrhagePipeline(config).preprocess_data()
     
     for model_name in models_to_compare:
         print(f"\nTraining {model_name}...")
@@ -103,6 +104,7 @@ def single_fold_training_example():
     
     print(f"Training fold {fold_idx} with {model_name}")
     
+    IntracranialHemorrhagePipeline(config).preprocess_data()
     history = train_fold(fold_idx, config, model_name)
     
     print("Training completed!")
@@ -123,7 +125,7 @@ def inference_example():
     fold_idx = 1
     model_name = 'resnext101'
     
-    model_path = config.MODEL_DIR / "best_model.pt"
+    model_path = config.checkpoint_dir(model_name, fold_idx) / "best_model.pt"
     
     if model_path.exists():
         print(f"Loading trained model from {model_path}")

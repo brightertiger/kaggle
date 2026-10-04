@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 from typing import Dict, Any, Tuple, Optional
-from collections import OrderedDict
+import random
 import torch.nn.functional as F
 from pathlib import Path
 
@@ -13,10 +13,12 @@ from ..models import WeightedBCELoss
 class ModelTrainer:
     """Training class for intracranial hemorrhage detection models"""
     
-    def __init__(self, model: nn.Module, device: str, config: Config):
-        self.model = model
+    def __init__(self, model: nn.Module, device: str, config: Config, checkpoint_dir=None):
+        self.model = model.to(device)
         self.device = device
         self.config = config
+        self.checkpoint_dir = Path(checkpoint_dir or config.MODEL_DIR)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.best_loss = float('inf')
         self.patience_counter = 0
         
@@ -30,7 +32,7 @@ class ModelTrainer:
         metric = F.binary_cross_entropy_with_logits(
             preds_tensor, targets_tensor, weight=weight, reduction='mean'
         )
-        return metric.item()
+        return metric.item() * predictions.shape[1] / float(weight[0].sum())
     
     def validate_epoch(self, valid_loader: torch.utils.data.DataLoader, 
                       loss_fn: nn.Module) -> Tuple[float, float]:
@@ -43,14 +45,14 @@ class ModelTrainer:
         with torch.no_grad():
             for batch in valid_loader:
                 images = batch['image'].float().to(self.device)
-                labels = batch['label'].float().squeeze().to(self.device)
+                labels = batch['label'].float().reshape(-1, self.config.NUM_CLASSES).to(self.device)
                 
                 predictions = self.model(images)
                 loss = loss_fn(predictions, labels).mean()
                 
-                losses.append(loss.item())
+                losses.extend([loss.item()] * len(images))
                 all_labels.append(labels.cpu().numpy())
-                all_predictions.append(predictions.cpu().numpy())
+                all_predictions.append(predictions.detach().cpu().numpy())
         
         all_labels = np.concatenate(all_labels, axis=0)
         all_predictions = np.concatenate(all_predictions, axis=0)
@@ -75,7 +77,7 @@ class ModelTrainer:
         
         for batch_idx, batch in enumerate(progress_bar):
             images = batch['image'].float().to(self.device)
-            labels = batch['label'].float().squeeze().to(self.device)
+            labels = batch['label'].float().reshape(-1, self.config.NUM_CLASSES).to(self.device)
             
             optimizer.zero_grad()
             
@@ -84,8 +86,8 @@ class ModelTrainer:
                     from apex import amp
                     predictions = self.model(images)
                     loss = loss_fn(predictions, labels).mean()
-                    scaled_loss = amp.scale_loss(loss, optimizer)
-                    scaled_loss.backward()
+                    with amp.scale_loss(loss, optimizer) as scaled_loss:
+                        scaled_loss.backward()
                 except ImportError:
                     predictions = self.model(images)
                     loss = loss_fn(predictions, labels).mean()
@@ -97,9 +99,9 @@ class ModelTrainer:
             
             optimizer.step()
             
-            losses.append(loss.item())
+            losses.extend([loss.item()] * len(images))
             all_labels.append(labels.cpu().numpy())
-            all_predictions.append(predictions.cpu().numpy())
+            all_predictions.append(predictions.detach().cpu().numpy())
             
             if batch_idx % 100 == 0:
                 current_loss = np.mean(losses[-100:])
@@ -111,8 +113,6 @@ class ModelTrainer:
         mean_loss = np.mean(losses)
         metric = self.calculate_metric(all_predictions, all_labels)
         
-        if scheduler is not None:
-            scheduler.step()
         
         return mean_loss, metric
     
@@ -123,19 +123,19 @@ class ModelTrainer:
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
-            'best_loss': self.best_loss,
+            'loss': float(loss),
+            'best_loss': min(self.best_loss, float(loss)),
         }
         
         if scheduler is not None:
             checkpoint['scheduler_state_dict'] = scheduler.state_dict()
         
-        save_path = self.config.MODEL_DIR / f"model_{epoch}.pt"
+        save_path = self.checkpoint_dir / f"model_{epoch}.pt"
         torch.save(checkpoint, save_path)
         
         if loss < self.best_loss:
-            self.best_loss = loss
-            best_save_path = self.config.MODEL_DIR / "best_model.pt"
+            self.best_loss = float(loss)
+            best_save_path = self.checkpoint_dir / "best_model.pt"
             torch.save(checkpoint, best_save_path)
             self.patience_counter = 0
         else:
@@ -175,6 +175,11 @@ class ModelTrainer:
             print(f"Train Loss: {train_loss:.5f}, Train Metric: {train_metric:.5f}")
             print(f"Valid Loss: {valid_loss:.5f}, Valid Metric: {valid_metric:.5f}")
             
+            if scheduler is not None:
+                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    scheduler.step(valid_loss)
+                else:
+                    scheduler.step()
             self.save_checkpoint(epoch, valid_loss, optimizer, scheduler)
             
             if self.patience_counter >= patience:
@@ -183,18 +188,21 @@ class ModelTrainer:
         
         return training_history
 
-def train_fold(fold_idx: int, config: Config, model_name: str = 'resnext101') -> None:
+def train_fold(fold_idx: int, config: Config, model_name: str = 'resnext101') -> Dict[str, Any]:
     """Train model for a specific fold"""
     from ..data import create_data_loaders
     from ..models import create_model
-    from ..training import create_optimizer, create_scheduler
+    from .optimizer import create_optimizer, create_scheduler
     from ..models import WeightedBCELoss
     
     print(f"Training fold {fold_idx}")
     
+    random.seed(config.SEED + fold_idx)
+    np.random.seed(config.SEED + fold_idx)
+    torch.manual_seed(config.SEED + fold_idx)
     train_loader, valid_loader = create_data_loaders(fold_idx, config)
     
-    model = create_model(model_name, config.NUM_CLASSES)
+    model = create_model(model_name, config.NUM_CLASSES, pretrained=config.PRETRAINED)
     model = model.to(config.DEVICE)
     
     optimizer = create_optimizer(
@@ -208,19 +216,19 @@ def train_fold(fold_idx: int, config: Config, model_name: str = 'resnext101') ->
     
     loss_fn = WeightedBCELoss()
     
-    trainer = ModelTrainer(model, config.DEVICE, config)
-    
-    try:
-        from apex import amp
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level="O2", 
-            keep_batchnorm_fp32=True, verbosity=0
-        )
-        use_amp = True
-    except ImportError:
-        print("Warning: Apex not available, training without mixed precision")
-        use_amp = False
-    
+    use_amp = False
+    if config.USE_AMP and torch.device(config.DEVICE).type == 'cuda':
+        try:
+            from apex import amp
+        except ImportError:
+            print('Apex unavailable; training in full precision')
+        else:
+            model, optimizer = amp.initialize(
+                model, optimizer, opt_level='O2', keep_batchnorm_fp32=True, verbosity=0)
+            use_amp = True
+    trainer = ModelTrainer(model, config.DEVICE, config,
+                           config.checkpoint_dir(model_name, fold_idx))
+
     training_history = trainer.train(
         train_loader=train_loader,
         valid_loader=valid_loader,
@@ -234,7 +242,8 @@ def train_fold(fold_idx: int, config: Config, model_name: str = 'resnext101') ->
     
     model = model.cpu()
     del model, optimizer, scheduler, trainer
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     
     print(f"Completed training fold {fold_idx}")
     

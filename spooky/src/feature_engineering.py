@@ -4,11 +4,13 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.stem.porter import PorterStemmer
 import string
-from typing import List, Dict, Any
+from typing import List
 from .config import Config
 
 class TextFeatureEngineer:
-    def __init__(self):
+    def __init__(self, config=None):
+        self.config = config or Config()
+        nltk.data.path.insert(0, str(self.config.NLTK_DATA_DIR))
         self.stopwords = set(stopwords.words("english"))
         self.porter = PorterStemmer()
         
@@ -41,7 +43,7 @@ class TextFeatureEngineer:
         return sum(1 for i in range(len(words)) if words[i] != stemmed_words[i])
     
     def count_pos_tag(self, text: str, pos_tag: str) -> int:
-        tokenized_text = nltk.word_tokenize(self.clean_string(text))
+        tokenized_text = nltk.word_tokenize(self.clean_string(text), preserve_line=True)
         pos_tagged = nltk.pos_tag(tokenized_text)
         return sum(1 for word, tag in pos_tagged if pos_tag in tag)
     
@@ -65,6 +67,7 @@ class TextFeatureEngineer:
     
     def extract_all_features(self, df: pd.DataFrame, text_column: str = 'text') -> pd.DataFrame:
         result_df = df.copy()
+        result_df[text_column] = result_df[text_column].fillna('').astype(str)
         
         feature_functions = {
             'count_word': self.count_word,
@@ -90,18 +93,19 @@ class TextFeatureEngineer:
         return result_df
     
     def _add_ratio_features(self, df: pd.DataFrame) -> None:
-        df['ratio_punct'] = df['count_punct'] / df['count_chars']
-        df['ratio_upper'] = df['count_upper'] / df['count_word']
-        df['ratio_stemwords'] = df['count_stemwords'] / df['count_word']
-        df['ratio_stopword'] = df['count_stopword'] / df['count_word']
-        df['ratio_noun'] = df['count_noun'] / df['count_word']
-        df['ratio_pronoun'] = df['count_pronoun'] / df['count_word']
-        df['ratio_det'] = df['count_det'] / df['count_word']
-        df['ratio_adj'] = df['count_adj'] / df['count_word']
-        df['ratio_verb'] = df['ratio_verb'] / df['count_word']
+        df['ratio_punct'] = df['count_punct'] / df['count_chars'].clip(lower=1)
+        df['ratio_upper'] = df['count_upper'] / df['count_word'].clip(lower=1)
+        df['ratio_stemwords'] = df['count_stemwords'] / df['count_word'].clip(lower=1)
+        df['ratio_stopword'] = df['count_stopword'] / df['count_word'].clip(lower=1)
+        df['ratio_noun'] = df['count_noun'] / df['count_word'].clip(lower=1)
+        df['ratio_pronoun'] = df['count_pronoun'] / df['count_word'].clip(lower=1)
+        df['ratio_det'] = df['count_det'] / df['count_word'].clip(lower=1)
+        df['ratio_adj'] = df['count_adj'] / df['count_word'].clip(lower=1)
+        df['ratio_verb'] = df['count_verb'] / df['count_word'].clip(lower=1)
 
 class NaiveBayesFeatureEngineer:
-    def __init__(self):
+    def __init__(self, config=None):
+        self.config = config or Config()
         self.word_vectorizer = None
         self.char_cnt_vectorizer = None
         self.char_tf_vectorizer = None
@@ -112,8 +116,8 @@ class NaiveBayesFeatureEngineer:
         from sklearn.feature_extraction.text import CountVectorizer
         
         self.word_vectorizer = CountVectorizer(
-            stop_words='english', 
-            ngram_range=Config.NGRAM_RANGE_WORD
+            stop_words='english',
+            ngram_range=self.config.NGRAM_RANGE_WORD
         )
         
         full_texts = train_texts + test_texts
@@ -128,7 +132,7 @@ class NaiveBayesFeatureEngineer:
         from sklearn.feature_extraction.text import CountVectorizer
         
         self.char_cnt_vectorizer = CountVectorizer(
-            ngram_range=Config.NGRAM_RANGE_CHAR_CNT, 
+            ngram_range=self.config.NGRAM_RANGE_CHAR_CNT,
             analyzer='char'
         )
         
@@ -144,7 +148,7 @@ class NaiveBayesFeatureEngineer:
         from sklearn.feature_extraction.text import TfidfVectorizer
         
         self.char_tf_vectorizer = TfidfVectorizer(
-            ngram_range=Config.NGRAM_RANGE_CHAR, 
+            ngram_range=self.config.NGRAM_RANGE_CHAR,
             analyzer='char'
         )
         
@@ -161,12 +165,12 @@ class NaiveBayesFeatureEngineer:
         from sklearn.decomposition import TruncatedSVD
         
         char_vectorizer = TfidfVectorizer(
-            ngram_range=Config.NGRAM_RANGE_CHAR, 
+            ngram_range=self.config.NGRAM_RANGE_CHAR,
             analyzer='char'
         )
         word_vectorizer = TfidfVectorizer(
-            stop_words='english', 
-            ngram_range=Config.NGRAM_RANGE_WORD
+            stop_words='english',
+            ngram_range=self.config.NGRAM_RANGE_WORD
         )
         
         full_texts = train_texts + test_texts
@@ -174,28 +178,34 @@ class NaiveBayesFeatureEngineer:
         char_features = char_vectorizer.fit_transform(full_texts)
         word_features = word_vectorizer.fit_transform(full_texts)
         
-        char_svd = TruncatedSVD(n_components=Config.SVD_COMPONENTS, algorithm='arpack')
-        word_svd = TruncatedSVD(n_components=Config.SVD_COMPONENTS, algorithm='arpack')
+        n_components = min(self.config.SVD_COMPONENTS,
+                           min(char_features.shape) - 1, min(word_features.shape) - 1)
+        if n_components < 1:
+            raise ValueError('SVD needs at least two documents and two features')
+        char_svd = self.char_svd = TruncatedSVD(
+            n_components=n_components, algorithm='arpack', random_state=self.config.RANDOM_STATE)
+        word_svd = self.word_svd = TruncatedSVD(
+            n_components=n_components, algorithm='arpack', random_state=self.config.RANDOM_STATE)
         
         char_svd.fit(char_features)
         word_svd.fit(word_features)
         
         train_char_svd = pd.DataFrame(
             char_svd.transform(char_vectorizer.transform(train_texts)),
-            columns=[f'svd_char_{i}' for i in range(Config.SVD_COMPONENTS)]
+            columns=[f'svd_char_{i}' for i in range(n_components)]
         )
         test_char_svd = pd.DataFrame(
             char_svd.transform(char_vectorizer.transform(test_texts)),
-            columns=[f'svd_char_{i}' for i in range(Config.SVD_COMPONENTS)]
+            columns=[f'svd_char_{i}' for i in range(n_components)]
         )
         
         train_word_svd = pd.DataFrame(
             word_svd.transform(word_vectorizer.transform(train_texts)),
-            columns=[f'svd_wrd_{i}' for i in range(Config.SVD_COMPONENTS)]
+            columns=[f'svd_wrd_{i}' for i in range(n_components)]
         )
         test_word_svd = pd.DataFrame(
             word_svd.transform(word_vectorizer.transform(test_texts)),
-            columns=[f'svd_wrd_{i}' for i in range(Config.SVD_COMPONENTS)]
+            columns=[f'svd_wrd_{i}' for i in range(n_components)]
         )
         
         train_svd_features = pd.concat([train_word_svd, train_char_svd], axis=1)

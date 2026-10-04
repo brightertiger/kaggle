@@ -6,16 +6,19 @@ from urllib.parse import unquote
 from typing import Dict, Any, List, Tuple
 import gender_guesser.detector as gender
 
-nlp = spacy.load('en_core_web_lg')
-gender_detector = gender.Detector()
 
 class FeatureExtractor:
-    def __init__(self):
+    def __init__(self, model_name='en_core_web_lg'):
+        # Load resources at construction time, so importing the package is offline.
+        self.nlp = spacy.load(model_name)
+        if not self.nlp.has_pipe('parser'):
+            raise ValueError('The spaCy pipeline must include a dependency parser')
+        self.gender_detector = gender.Detector()
         self._setup_spacy_extensions()
     
     def _setup_spacy_extensions(self):
         spacy.tokens.doc.Doc.set_extension(
-            'to', method=lambda doc, offset: [t for t in doc if t.idx == offset][0], force=True)
+            'to', method=lambda doc, offset: next(t for t in doc if t.idx <= offset < t.idx + len(t)), force=True)
         spacy.tokens.token.Token.set_extension(
             'c', getter=lambda t: [c for c in t.children], force=True)
         spacy.tokens.token.Token.set_extension(
@@ -69,15 +72,14 @@ class FeatureExtractor:
         return any(word in url_words for word in name_words)
     
     def _word_index(self, text: str, word: str, offset: int) -> int:
-        doc = nlp(text)
-        tokens = [(token.idx, token) for token in doc]
-        word_first = word.split()[0]
-        
-        for idx, (pos, token) in enumerate(tokens):
-            if str(token) == word_first and abs(pos - offset) < 10:
-                return idx
-        return 0
-    
+        doc = self.nlp.make_doc(text)
+        # Names with hyphens or apostrophes can span several spaCy tokens.
+        # The supplied offset identifies the first token without a text heuristic.
+        try:
+            return doc._.to(offset).i
+        except StopIteration as exc:
+            raise ValueError(f'No token at character offset {offset}') from exc
+
     def _bin_distance(self, value: int) -> int:
         if value < 3: return 1
         elif value < 4: return 2
@@ -91,7 +93,7 @@ class FeatureExtractor:
     
     def _name_count(self, text: str, word: str) -> int:
         try:
-            count_total = len(re.findall(word, text))
+            count_total = len(re.findall(re.escape(word), text))
             text_words = text.split()
             word_parts = word.split()
             count_first = text_words.count(word_parts[0])
@@ -106,10 +108,10 @@ class FeatureExtractor:
             features.append(self._extract_row_features(row))
         
         feature_df = pd.DataFrame(features)
-        return pd.merge(data, feature_df, on='ID')
+        return pd.merge(data, feature_df, on='ID', sort=False, validate='one_to_one')
     
     def _extract_row_features(self, row: pd.Series) -> Dict[str, Any]:
-        doc = nlp(row['Text'])
+        doc = self.nlp(row['Text'])
         pronoun_token = doc._.to(row['Pronoun-offset'])
         name_a_token = self._find_head(row['A'], row['A-offset'], doc)
         name_b_token = self._find_head(row['B'], row['B-offset'], doc)
@@ -125,18 +127,12 @@ class FeatureExtractor:
         return features
     
     def _find_head(self, word: str, offset: int, doc) -> Any:
-        token = None
-        backtrack = 0
-        while not token:
-            try:
-                token = doc._.to(offset)
-            except IndexError:
-                offset -= 1
-                backtrack += 1
-        
-        while (token.dep_ == 'compound' and 
-               token.head.idx >= offset and 
-               token.head.idx < len(word) + offset + backtrack):
+        try:
+            token = doc._.to(offset)
+        except StopIteration as exc:
+            raise ValueError(f'No token at character offset {offset}') from exc
+        end = offset + len(word)
+        while token.dep_ == 'compound' and token.head != token and offset <= token.head.idx < end:
             token = token.head
         return token
     
@@ -225,7 +221,7 @@ class FeatureExtractor:
                 continue
             
             first_name = name.split(' ')[0]
-            detected_gender = gender_detector.get_gender(first_name)
+            detected_gender = self.gender_detector.get_gender(first_name)
             
             if ((pronoun_gender == 'male' and detected_gender == 'female') or
                 (pronoun_gender == 'female' and detected_gender == 'male')):
@@ -284,7 +280,7 @@ class FeatureExtractor:
                                    name_a_candidate, name_b_candidate, text) -> Dict[str, Any]:
         features = {}
         
-        doc = nlp(text)
+        doc = pronoun_token.doc
         
         parallel_scores = self._compute_parallel_scores(pronoun_token, candidates_by_name)
         theta_scores = self._compute_theta_scores(pronoun_token, candidates_by_name)

@@ -1,200 +1,112 @@
-import torch
+"""Checkpoint inference, horizontal-flip TTA, fold averaging, and RLE."""
+import json
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from torch.utils.data import DataLoader
-from functools import reduce
+import torch
 
-from ..core.config import Config
 from ..models.models import create_model
-from ..data.data_utils import create_test_loader, SaltScoreDataset
+from ..data.data_utils import create_data_loaders, create_test_loader, load_manifest, restore_logits
+
 
 class ModelPredictor:
-    """Model prediction class for Salt Identification"""
-    
-    def __init__(self, config: Config):
+    def __init__(self, config):
         self.config = config
         self.device = torch.device(config.DEVICE)
-        
-    def load_model(self, fold_idx: int, model_name: str) -> torch.nn.Module:
-        """Load trained model for a specific fold"""
-        model_path = self.config.MODEL_DIR / f"model_{fold_idx}.pth"
-        
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {model_path}")
-        
-        # Create and load model
-        model = create_model(model_name, self.config)
-        checkpoint = torch.load(model_path, map_location=self.device)
+
+    def load_model(self, fold_idx, model_name):
+        self.config.MODEL_NAME = model_name
+        model_path = self.config.MODEL_DIR / f'model_{fold_idx}.pth'
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
+        for key in ('MODEL_NAME', 'TINY_MODEL', 'IMAGE_SIZE', 'PADDED_SIZE', 'NUM_FOLDS', 'RANDOM_SEED'):
+            if checkpoint['config'][key] != getattr(self.config, key):
+                raise ValueError(f'Checkpoint configuration mismatch: {key}')
+        # Loading a checkpoint never needs an ImageNet download.
+        model = create_model(model_name, self.config, pretrained=False).to(self.device)
         model.load_state_dict(checkpoint['state_dict'])
-        model = model.to(self.device)
-        model.eval()
-        
-        print(f"Loaded model for fold {fold_idx}")
-        return model
-    
-    def predict_single_fold(self, fold_idx: int, model_name: str, 
-                           use_tta: bool = False) -> Tuple[np.ndarray, np.ndarray]:
-        """Generate predictions for a single fold"""
+        return model.eval()
+
+    def predict_single_fold(self, fold_idx, model_name, use_tta=False):
         model = self.load_model(fold_idx, model_name)
-        
-        # Create data loaders
-        valid_loader = self._create_validation_loader(fold_idx)
-        test_loader = self._create_test_loader()
-        
-        # Validation predictions
-        valid_scores, valid_actuals = self._predict_loader(model, valid_loader, use_tta)
-        
-        # Test predictions
-        test_scores = self._predict_loader(model, test_loader, use_tta, has_masks=False)
-        
-        # Save predictions
-        self._save_predictions(fold_idx, valid_scores, valid_actuals, test_scores)
-        
-        return valid_scores, test_scores
-    
-    def _create_validation_loader(self, fold_idx: int) -> DataLoader:
-        """Create validation data loader"""
-        from ..data.data_utils import create_data_loaders
+        self.config._create_directories()
         _, valid_loader = create_data_loaders(fold_idx, self.config)
-        return valid_loader
-    
-    def _create_test_loader(self) -> DataLoader:
-        """Create test data loader"""
-        return create_test_loader(self.config)
-    
-    def _predict_loader(self, model: torch.nn.Module, data_loader: DataLoader, 
-                       use_tta: bool = False, has_masks: bool = True) -> np.ndarray:
-        """Generate predictions for a data loader"""
-        predictions = []
-        actuals = []
-        
+        test_loader = create_test_loader(self.config)
+        valid_scores, valid_actuals = self._predict_loader(model, valid_loader, use_tta)
+        test_scores = self._predict_loader(model, test_loader, use_tta, has_masks=False)
+        np.save(self.config.SCORES_DIR / 'valid' / f'scores_{fold_idx}.npy', valid_scores)
+        np.save(self.config.SCORES_DIR / 'valid' / f'actuals_{fold_idx}.npy', valid_actuals)
+        np.save(self.config.SCORES_DIR / 'test' / f'scores_{fold_idx}.npy', test_scores)
+        metadata = {'use_tta': use_tta, 'test_ids': test_loader.dataset.frame.id.tolist(),
+                    'config': self.config.to_dict(),
+                    'checkpoint_mtime': (self.config.MODEL_DIR / f'model_{fold_idx}.pth').stat().st_mtime_ns}
+        (self.config.SCORES_DIR / f'fold_{fold_idx}.json').write_text(json.dumps(metadata))
+        return valid_scores, test_scores
+
+    def _predict_loader(self, model, data_loader, use_tta=False, has_masks=True):
+        predictions, actuals = [], []
         with torch.no_grad():
-            for batch_idx, sample in enumerate(data_loader):
+            for sample in data_loader:
                 images = sample['image'].to(self.device)
-                
-                if use_tta:
-                    # Test Time Augmentation
-                    preds = self._predict_with_tta(model, images)
-                else:
-                    preds = model(images)
-                
-                predictions.append(preds.cpu().numpy())
-                
-                if has_masks and 'mask' in sample:
-                    masks = sample['mask'].cpu().numpy()
-                    actuals.append(masks)
-        
-        predictions = np.vstack(predictions)
-        
-        if has_masks and actuals:
-            actuals = np.vstack(actuals)
-            return predictions, actuals
-        
-        return predictions
-    
-    def _predict_with_tta(self, model: torch.nn.Module, images: torch.Tensor) -> torch.Tensor:
-        """Predict with Test Time Augmentation"""
-        # Original prediction
-        pred1 = model(images)
-        
-        # Horizontal flip prediction
-        pred2 = model(torch.flip(images, dims=[3]))
-        pred2 = torch.flip(pred2, dims=[3])
-        
-        # Average predictions
-        return 0.5 * pred1 + 0.5 * pred2
-    
-    def _save_predictions(self, fold_idx: int, valid_scores: np.ndarray, 
-                         valid_actuals: np.ndarray, test_scores: np.ndarray):
-        """Save predictions to disk"""
-        # Save validation predictions
-        np.save(self.config.SCORES_DIR / "valid" / f"scores_{fold_idx}.npy", valid_scores)
-        np.save(self.config.SCORES_DIR / "valid" / f"actuals_{fold_idx}.npy", valid_actuals)
-        
-        # Save test predictions
-        np.save(self.config.SCORES_DIR / "test" / f"scores_{fold_idx}.npy", test_scores)
-        
-        print(f"Saved predictions for fold {fold_idx}")
-    
-    def predict_all_folds(self, model_name: str, use_tta: bool = False) -> Dict[int, np.ndarray]:
-        """Generate predictions for all folds"""
-        all_test_predictions = {}
-        
-        for fold_idx in range(1, self.config.NUM_FOLDS + 1):
-            print(f"\nGenerating predictions for fold {fold_idx}...")
-            valid_scores, test_scores = self.predict_single_fold(
-                fold_idx, model_name, use_tta
-            )
-            all_test_predictions[fold_idx] = test_scores
-        
-        return all_test_predictions
-    
-    def create_submission(self, model_name: str, use_tta: bool = False, 
-                         threshold: Optional[float] = None) -> pd.DataFrame:
-        """Create submission file from ensemble predictions"""
-        if threshold is None:
-            threshold = self.config.IOU_CUTOFF
-        
-        # Load test indices
-        test_path = self.config.PROCESSED_DATA_DIR / "test"
-        import pickle
-        with open(test_path / "test.pkl", 'rb') as f:
-            test_indices = pickle.load(f)
-        
-        # Load all fold predictions
+                preds = self._predict_with_tta(model, images) if use_tta else model(images)
+                predictions.append(restore_logits(preds, self.config).cpu().numpy())
+                if has_masks:
+                    actuals.append(sample['original_mask'].numpy())
+        if not predictions:
+            raise ValueError('Cannot predict an empty dataset')
+        scores = np.concatenate(predictions)
+        if not np.isfinite(scores).all():
+            raise ValueError('Non-finite model predictions')
+        return (scores, np.concatenate(actuals)) if has_masks else scores
+
+    def _predict_with_tta(self, model, images):
+        original = model(images)
+        flipped = torch.flip(model(torch.flip(images, dims=[3])), dims=[3])
+        return (original + flipped) / 2
+
+    def predict_all_folds(self, model_name, use_tta=False):
+        return {fold: self.predict_single_fold(fold, model_name, use_tta)[1]
+                for fold in range(1, self.config.NUM_FOLDS + 1)}
+
+    def create_submission(self, model_name, use_tta=False, threshold=None):
+        self.config.MODEL_NAME = model_name
+        self.config._create_directories()
+        threshold = self.config.IOU_CUTOFF if threshold is None else threshold
+        test_ids = load_manifest(self.config, 'test').id.tolist()
         all_predictions = []
-        for fold_idx in range(1, self.config.NUM_FOLDS + 1):
-            scores_path = self.config.SCORES_DIR / "test" / f"scores_{fold_idx}.npy"
-            if scores_path.exists():
-                scores = np.load(scores_path)
-                all_predictions.append(scores)
-        
-        if not all_predictions:
-            raise ValueError("No predictions found. Run prediction first.")
-        
-        # Ensemble predictions
-        ensemble_predictions = reduce(lambda x, y: x + y, all_predictions)
-        ensemble_predictions = ensemble_predictions / len(all_predictions)
-        
-        # Create submission
-        submission_data = {}
-        for idx, image_id in enumerate(test_indices):
-            # Extract prediction for this image (remove padding)
-            pred = ensemble_predictions[idx, 14:-13, 14:-13]
-            pred = pred.reshape(self.config.IMAGE_SIZE, self.config.IMAGE_SIZE, 1)
-            
-            # Apply threshold
-            pred_binary = (pred >= threshold).astype(np.int32)
-            
-            # Filter small predictions
-            if pred_binary.sum() <= self.config.MIN_SALT_PIXELS:
-                pred_binary = np.zeros_like(pred_binary)
-            
-            # Convert to RLE
-            rle = self._rle_encode(pred_binary)
-            submission_data[image_id] = rle
-        
-        # Create DataFrame
-        submission_df = pd.DataFrame.from_dict(
-            list(submission_data.items()),
-            columns=['id', 'rle_mask']
-        )
-        
-        # Save submission
-        submission_path = self.config.SUBMIT_DIR / f"{model_name}_submission.csv"
-        submission_df.to_csv(submission_path, index=False)
-        
-        print(f"Submission saved to: {submission_path}")
-        print(f"Total predictions: {len(submission_df)}")
-        
-        return submission_df
-    
-    def _rle_encode(self, image: np.ndarray) -> str:
-        """Run Length Encoding for binary images"""
-        pixels = image.flatten(order='F')
-        pixels = np.concatenate([[0], pixels, [0]])
-        runs = np.where(pixels[1:] != pixels[:-1])[0] + 1
+        for fold in range(1, self.config.NUM_FOLDS + 1):
+            scores_path = self.config.SCORES_DIR / 'test' / f'scores_{fold}.npy'
+            metadata_path = self.config.SCORES_DIR / f'fold_{fold}.json'
+            if not scores_path.exists() or not metadata_path.exists():
+                raise FileNotFoundError(f'Missing fold {fold} predictions; run predict first')
+            metadata = json.loads(metadata_path.read_text())
+            model_path = self.config.MODEL_DIR / f'model_{fold}.pth'
+            if metadata['use_tta'] != use_tta or metadata['test_ids'] != test_ids:
+                raise ValueError('Prediction IDs or TTA settings changed; rerun predict')
+            for key in ('IMAGE_SIZE', 'PADDED_SIZE', 'ORIGINAL_SIZE', 'NUM_FOLDS', 'RANDOM_SEED', 'MEAN', 'STD'):
+                if metadata['config'][key] != getattr(self.config, key):
+                    raise ValueError(f'Prediction configuration changed: {key}; rerun predict')
+            if not model_path.exists() or metadata['checkpoint_mtime'] != model_path.stat().st_mtime_ns:
+                raise ValueError('Model changed since prediction; rerun predict')
+            scores = np.load(scores_path)
+            expected = (len(test_ids), 1, self.config.ORIGINAL_SIZE, self.config.ORIGINAL_SIZE)
+            if scores.shape != expected or not np.isfinite(scores).all():
+                raise ValueError(f'Invalid prediction array for fold {fold}')
+            all_predictions.append(scores)
+        ensemble = np.mean(all_predictions, axis=0)
+        rles = []
+        for scores in ensemble[:, 0]:
+            mask = scores >= threshold
+            if mask.sum() <= self.config.MIN_SALT_PIXELS:
+                mask[:] = False
+            rles.append(self._rle_encode(mask))
+        submission = pd.DataFrame({'id': test_ids, 'rle_mask': rles})
+        path = self.config.SUBMIT_DIR / f'{self.config.MODEL_TAG}_submission.csv'
+        submission.to_csv(path, index=False)
+        print(f'Submission saved to {path}')
+        return submission
+
+    @staticmethod
+    def _rle_encode(image):
+        pixels = np.concatenate(([0], np.asarray(image).flatten(order='F'), [0]))
+        runs = np.flatnonzero(pixels[1:] != pixels[:-1]) + 1
         runs[1::2] -= runs[::2]
-        return ' '.join(str(x) for x in runs)
+        return ' '.join(map(str, runs))

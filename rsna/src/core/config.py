@@ -1,5 +1,7 @@
-import os
+"""Configuration with paths derived at access time, without import-time writes."""
 from pathlib import Path
+import torch
+
 
 class Config:
     SEED = 2017
@@ -13,27 +15,50 @@ class Config:
     NUM_FOLDS = 5
     NUM_CLASSES = 6
     NUM_WORKERS = 6
-    
-    DATA_DIR = Path("../data")
-    TRAIN_DIR = DATA_DIR / "train"
-    TEST_DIR = DATA_DIR / "test"
-    OUTPUT_DIR = Path("../output")
-    MODEL_DIR = Path("../model")
-    SCORE_DIR = Path("../score")
-    
-    TRAIN_CSV = DATA_DIR / "train.csv"
-    TEST_CSV = DATA_DIR / "test.csv"
-    
-    CLASS_NAMES = [
-        'any', 'epidural', 'intraparenchymal', 
-        'intraventricular', 'subarachnoid', 'subdural'
-    ]
-    
+    PRETRAINED = True
+    USE_AMP = True
+    USE_TTA = False
+    TRAIN_LABELS = 'stage_1_train.csv'
+    SAMPLE_SUBMISSION = 'stage_1_sample_submission.csv'
+    TRAIN_IMAGES = 'train'
+    TEST_IMAGES = 'test'
+    CLASS_NAMES = ['any', 'epidural', 'intraparenchymal',
+                   'intraventricular', 'subarachnoid', 'subdural']
     WINDOW_CENTERS = [40, 80, 40]
     WINDOW_WIDTHS = [80, 200, 380]
-    
-    DEVICE = 'cuda:0' if os.environ.get('CUDA_VISIBLE_DEVICES') else 'cpu'
-    
-    def __init__(self):
-        for directory in [self.DATA_DIR, self.OUTPUT_DIR, self.MODEL_DIR, self.SCORE_DIR]:
-            directory.mkdir(parents=True, exist_ok=True)
+
+    def __init__(self, data_dir='data', output_dir='output'):
+        self.DATA_DIR = Path(data_dir)
+        self.OUTPUT_DIR = Path(output_dir)
+        self.DEVICE = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+
+    @property
+    def TRAIN_DIR(self):
+        return Path(self.DATA_DIR) / self.TRAIN_IMAGES
+
+    @property
+    def TEST_DIR(self):
+        return Path(self.DATA_DIR) / self.TEST_IMAGES
+
+    @property
+    def MODEL_DIR(self):
+        return Path(self.OUTPUT_DIR) / 'models'
+
+    @property
+    def SCORE_DIR(self):
+        return Path(self.OUTPUT_DIR) / 'scores'
+
+    @property
+    def TRAIN_CSV(self):
+        return Path(self.OUTPUT_DIR) / 'train.csv'
+
+    @property
+    def TEST_CSV(self):
+        return Path(self.OUTPUT_DIR) / 'test.csv'
+
+    def checkpoint_dir(self, model_name, fold_idx):
+        return self.MODEL_DIR / model_name / f'fold_{fold_idx}'
+
+    def ensure_output_dirs(self):
+        for directory in (self.OUTPUT_DIR, self.MODEL_DIR, self.SCORE_DIR):
+            Path(directory).mkdir(parents=True, exist_ok=True)

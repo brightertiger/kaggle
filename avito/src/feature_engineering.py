@@ -3,12 +3,7 @@ import numpy as np
 import re
 import string
 from collections import Counter
-from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from sklearn.pipeline import FeatureUnion
 from stop_words import get_stop_words
-from typing import List, Dict, Any, Tuple
-import os
 
 
 class TextPreprocessor:
@@ -23,11 +18,11 @@ class TextPreprocessor:
         
         text = str(text).lower()
         text = " ".join(map(str.strip, re.split(r'(\d+)', text)))
-        regex = re.compile(r'[^[:alpha:]]')
+        regex = re.compile(r'[^\w\s]|_', flags=re.UNICODE)
         text = regex.sub(" ", text)
         text = re.sub('[' + string.punctuation + ']', ' ', text)
         text = " ".join(text.split())
-        return text
+        return text or 'none'
     
     def has_russian_vowels(self, text: str) -> int:
         for char in text:
@@ -73,7 +68,7 @@ class TextPreprocessor:
         if total_chars == 0:
             return 0
         
-        uppercase_chars = sum(1 for c in text if c == c.upper() and c != ' ')
+        uppercase_chars = sum(1 for c in text if c.isupper())
         return uppercase_chars / total_chars
     
     def all_caps_ratio(self, text: str) -> float:
@@ -81,7 +76,7 @@ class TextPreprocessor:
         if not words:
             return 0
         
-        all_caps_words = sum(1 for word in words if word == word.upper())
+        all_caps_words = sum(1 for word in words if word.isupper())
         return all_caps_words / len(words)
     
     def count_stop_words(self, text: str) -> int:
@@ -104,8 +99,8 @@ class CountFeatures:
         test_data = self.data_loader.load_test_data(columns + [self.config.avito.ID_COLUMN])
         full_data = pd.concat([train_data, test_data], ignore_index=True)
         
-        train_other = self.data_loader.load_train_active(columns)
-        test_other = self.data_loader.load_test_active(columns)
+        train_other = self.data_loader.load_train_active(self.config.avito.CATEGORICAL_COLUMNS)
+        test_other = self.data_loader.load_test_active(self.config.avito.CATEGORICAL_COLUMNS)
         other_data = pd.concat([train_other, test_other], ignore_index=True)
         
         count_features = [
@@ -120,7 +115,8 @@ class CountFeatures:
         ]
         
         for group_cols, feature_name in count_features:
-            feature = other_data.groupby(group_cols)['user_type'].count().reset_index()
+            source = full_data if group_cols == ['image_top_1'] else other_data
+            feature = source.groupby(group_cols)['user_type'].count().reset_index()
             feature = feature.rename(columns={'user_type': feature_name})
             
             driver_cols = [self.config.avito.ID_COLUMN] + group_cols
@@ -171,7 +167,7 @@ class TextFeatures:
         
         self._generate_sentiment_features(train_data, test_data)
         
-        final_features = train_data.append(test_data).drop('title', axis=1)
+        final_features = pd.concat([train_data, test_data], ignore_index=True).drop('title', axis=1)
         output_path = f'{self.config.avito.FEATURES_DIR}/text_title/title.csv'
         final_features.to_csv(output_path, index=False)
         print(f'Generated title features: {final_features.shape}')
@@ -276,6 +272,8 @@ class UserFeatures:
         feature = feature.clip(upper=upper_bound)
         mean = feature.mean()
         std = feature.std()
+        if pd.isna(std) or std == 0:
+            return pd.Series(0.0, index=feature.index)
         return (feature - mean) / std
 
 
@@ -321,6 +319,7 @@ class FeaturePipeline:
         self.date_features.set_data_loader(data_loader)
     
     def generate_all_features(self):
+        self.config.avito.create_directories()
         print("Generating count features...")
         self.count_features.generate_count_features()
         

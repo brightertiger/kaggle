@@ -1,43 +1,20 @@
 import torch
 import pandas as pd
-import numpy as np
 from tqdm import tqdm
 from ..utils.config import Config
 
+
 class ModelInference:
-    def __init__(self, model, device=Config.DEVICE):
-        self.model = model
-        self.device = device
+    def __init__(self, model, device=None):
+        self.device = device or Config.DEVICE
+        self.model = model.to(self.device)
         self.model.eval()
-    
+
     def predict(self, data_loader):
-        scores = []
-        ids = []
-        
-        tq = tqdm(total=len(data_loader) * 24, disable=False)
-        
+        scores, ids = [], []
         with torch.no_grad():
-            for batch in data_loader:
-                batch_ids = batch.pop('id')
-                
-                for key, value in batch.items():
-                    batch[key] = value.to(self.device)
-                
-                predictions = torch.sigmoid(self.model(**batch))
-                
-                scores.append(predictions.cpu().data.numpy().reshape(-1, 1))
-                ids.append(batch_ids.data.numpy().reshape(-1, 1))
-                
-                tq.update(24)
-        
-        tq.close()
-        
-        scores = np.vstack(scores)
-        ids = np.vstack(ids)
-        
-        results = pd.DataFrame({
-            'id': ids.flatten(),
-            'toxic': scores.flatten()
-        })
-        
-        return results
+            for batch in tqdm(data_loader, desc='Predict'):
+                ids.extend(batch.pop('id'))
+                inputs = {key: value.to(self.device) for key, value in batch.items()}
+                scores.extend(torch.sigmoid(self.model(**inputs)).cpu().numpy().reshape(-1).tolist())
+        return pd.DataFrame({'id': ids, 'toxic': scores})

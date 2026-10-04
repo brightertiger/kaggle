@@ -161,3 +161,12 @@ wandb/
 
 # MLflow
 mlruns/
+# Local runnable examples and generated outputs
+sample_data/
+dry_run_output/
+output/
+!requirements.txt
+
+# The source package is not a generated dataset.
+!src/data/
+!src/data/*.py

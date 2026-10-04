@@ -1,49 +1,31 @@
-import sys
-import os
-import torch
-
-sys.path.insert(0, os.path.dirname(__file__))
-
+"""Importable examples; running this file executes the offline smoke test."""
 from src.pipeline import JigsawPipeline
+from src.utils.config import Config
 
-def example_data_preparation():
-    pipeline = JigsawPipeline()
-    
-    print("Preparing raw data...")
-    pipeline.prepare_data('../../data')
-    
-    print("Generating embeddings...")
-    pipeline.generate_embeddings('../../data')
-    
-    print("Generating adversarial data...")
-    pipeline.generate_adversarial_data('../../data')
 
-def example_training():
-    pipeline = JigsawPipeline()
-    
-    print("Training Version 1 - Fold 0")
-    pipeline.train_version1(subset=0, load_pretrained=False)
-    
-    print("Training Version 2 - Fold 0 (with Version 1 weights)")
+def example_data_preparation(data_dir='data', model_dir='model'):
+    pipeline = JigsawPipeline(Config(data_dir, model_dir))
+    pipeline.prepare_data(data_dir)
+    pipeline.generate_embeddings(data_dir)
+    pipeline.generate_adversarial_data(data_dir)
+
+
+def example_training(data_dir='data', model_dir='model'):
+    pipeline = JigsawPipeline(Config(data_dir, model_dir))
+    pipeline.train_version1(subset=0)
     pipeline.train_version2(subset=0, load_from_version1=True)
 
-def example_scoring():
-    pipeline = JigsawPipeline()
-    
-    print("Scoring all models...")
-    pipeline.scoring_pipeline.score_all_models('../../data/process/foreign/test_english.csv')
 
-def example_full_pipeline():
-    pipeline = JigsawPipeline()
-    
-    print("Running complete pipeline...")
-    final_predictions = pipeline.run_full_pipeline(
-        data_dir='../../data',
-        test_path='../../data/process/foreign/test_english.csv'
-    )
-    
-    print(f"Final predictions shape: {final_predictions.shape}")
-    print("Pipeline completed successfully!")
+def example_scoring(data_dir='data', model_dir='model'):
+    pipeline = JigsawPipeline(Config(data_dir, model_dir))
+    pipeline.scoring_pipeline.score_all_models(f'{data_dir}/process/foreign/test_foreign.csv')
+    return pipeline.create_ensemble()
+
+
+def example_full_pipeline(data_dir='data', model_dir='model'):
+    return JigsawPipeline(Config(data_dir, model_dir)).run_full_pipeline()
+
 
 if __name__ == '__main__':
-    example_data_preparation()
+    from dry_run import main
+    main()

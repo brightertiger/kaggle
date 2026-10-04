@@ -1,18 +1,13 @@
 import os
 from pathlib import Path
-from typing import List, Dict, Any
 
 class Config:
     """Configuration class for TalkingData AdTracking Fraud Detection pipeline."""
     
-    def __init__(self):
+    def __init__(self, data_dir="data", raw_data_dir=None):
         # Data paths
-        self.DATA_DIR = Path("../data")
-        self.RAW_DATA_DIR = self.DATA_DIR / "download"
-        self.PROCESSED_DATA_DIR = self.DATA_DIR / "processed"
-        self.FEATURES_DIR = self.DATA_DIR / "features"
-        self.MODELS_DIR = self.DATA_DIR / "models"
-        self.SUBMISSIONS_DIR = self.DATA_DIR / "submissions"
+        self.DATA_DIR = Path(data_dir)
+        self._raw_data_dir = Path(raw_data_dir) if raw_data_dir is not None else None
         
         # File names
         self.TRAIN_FILE = "train.csv"
@@ -40,9 +35,9 @@ class Config:
         self.KEEP_HOURS = [4, 5, 9, 10, 13, 14]
         
         # Model parameters
-        self.NUM_MODELS = 6
-        self.CROSS_VALIDATION_FOLDS = 5
+        self.NUM_BOOST_ROUND = 1000
         self.EARLY_STOPPING_ROUNDS = 50
+        self.LOG_EVALUATION_PERIOD = 50
         
         # LightGBM parameters for different models
         self.LGB_PARAMS = {
@@ -91,17 +86,41 @@ class Config:
         }
         
         # System settings
-        self.NUM_THREADS = os.cpu_count()
+        self.NUM_THREADS = os.cpu_count() or 1
         self.RANDOM_STATE = 42
-        
-        # Create directories
-        self._create_directories()
+
+    @property
+    def MODEL_NAMES(self):
+        return list(self.LGB_PARAMS)
+
+    @property
+    def NUM_MODELS(self):
+        return len(self.MODEL_NAMES)
+
+    @property
+    def RAW_DATA_DIR(self):
+        return self._raw_data_dir if self._raw_data_dir is not None else Path(self.DATA_DIR) / "download"
+
+    @property
+    def PROCESSED_DATA_DIR(self):
+        return Path(self.DATA_DIR) / "processed"
+
+    @property
+    def FEATURES_DIR(self):
+        return Path(self.DATA_DIR) / "features"
+
+    @property
+    def MODELS_DIR(self):
+        return Path(self.DATA_DIR) / "models"
+
+    @property
+    def SUBMISSIONS_DIR(self):
+        return Path(self.DATA_DIR) / "submissions"
     
     def _create_directories(self):
         """Create necessary directories if they don't exist."""
         directories = [
-            self.DATA_DIR,
-            self.RAW_DATA_DIR,
+            Path(self.DATA_DIR),
             self.PROCESSED_DATA_DIR,
             self.FEATURES_DIR,
             self.MODELS_DIR,

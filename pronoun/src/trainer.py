@@ -22,25 +22,27 @@ class PronounTrainer:
     def validate(self, val_loader) -> float:
         self.model.eval()
         total_loss = 0.0
-        num_batches = 0
+        num_samples = 0
         
         with torch.no_grad():
             for batch in val_loader:
                 tokens, offsets, feature_a, feature_b, labels = [x.to(self.device) for x in batch]
                 
                 outputs = self.model(tokens, offsets, feature_a, feature_b)
-                loss = self.loss_fn(outputs, labels.squeeze())
+                loss = self.loss_fn(outputs, labels.reshape(-1))
                 
-                total_loss += loss.item()
-                num_batches += 1
+                total_loss += loss.item() * len(labels)
+                num_samples += len(labels)
         
-        avg_loss = total_loss / num_batches
+        if not num_samples:
+            raise ValueError('Cannot train or validate an empty loader')
+        avg_loss = total_loss / num_samples
         return avg_loss
     
     def train_epoch(self, train_loader) -> float:
         self.model.train()
         total_loss = 0.0
-        num_batches = 0
+        num_samples = 0
         
         pbar = tqdm(train_loader, desc="Training", leave=False)
         for batch in pbar:
@@ -48,17 +50,19 @@ class PronounTrainer:
             
             self.optimizer.zero_grad()
             outputs = self.model(tokens, offsets, feature_a, feature_b)
-            loss = self.loss_fn(outputs, labels.squeeze())
+            loss = self.loss_fn(outputs, labels.reshape(-1))
             
             loss.backward()
             self.optimizer.step()
             
-            total_loss += loss.item()
-            num_batches += 1
+            total_loss += loss.item() * len(labels)
+            num_samples += len(labels)
             
             pbar.set_postfix({'loss': f'{loss.item():.4f}'})
         
-        avg_loss = total_loss / num_batches
+        if not num_samples:
+            raise ValueError('Cannot train or validate an empty loader')
+        avg_loss = total_loss / num_samples
         return avg_loss
     
     def train(self, 
@@ -84,7 +88,10 @@ class PronounTrainer:
                 self.save_checkpoint(save_dir, epoch, val_loss)
             
             if self.scheduler:
-                self.scheduler.step(val_loss)
+                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step(val_loss)
+                else:
+                    self.scheduler.step()
         
         return history
     
@@ -103,11 +110,12 @@ class PronounTrainer:
         print(f'Model saved with validation loss: {val_loss:.4f}')
     
     def load_checkpoint(self, checkpoint_path: str):
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
         if self.scheduler and 'scheduler_state_dict' in checkpoint:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         
+        self.best_val_loss = checkpoint['val_loss']
         return checkpoint['epoch'], checkpoint['val_loss']

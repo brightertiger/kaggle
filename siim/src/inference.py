@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from .data_utils import MelanomaDataset
@@ -84,11 +83,11 @@ class MelanomaInference:
         
         return ensemble_predictions
 
-def create_test_dataset(image_path, metadata_df):
-    return MelanomaDataset(image_path, metadata_df, fold=None, is_training=False)
+def create_test_dataset(image_path, metadata_df, config=None):
+    return MelanomaDataset(image_path, metadata_df, fold=None, is_training=False, config=config)
 
 def load_trained_model(model_path, model_class, device=Config.DEVICE):
-    model = model_class()
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=True)
+    model = model_class(pretrained=False, **checkpoint.get('model_config', {}))
     model.load_state_dict(checkpoint['model_state_dict'])
-    return model
+    return model.to(device).eval()

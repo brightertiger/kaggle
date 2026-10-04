@@ -1,491 +1,242 @@
-# Whale Identification Challenge
+# [Whale Identification Challenge](https://www.kaggle.com/competitions/humpback-whale-identification)
 
-A comprehensive deep learning solution for identifying individual whales from images, developed for the [Happywhale - Whale and Dolphin Identification](https://www.kaggle.com/c/happywhale-cetacean-identification) challenge on Kaggle.
+Final rank: not documented / teams: not documented / medal: not documented in the portfolio table.
 
-## 🏆 Challenge Overview
+I approached whale identification as both classification and similarity learning:
+learn to recognize known individuals, then learn an embedding and a pairwise comparison.
+This folder preserves the ResNet50, center-loss, and Siamese components of that approach.
+The runnable reconstruction includes repaired data loading, checkpoint metadata, and inference.
 
-The Happywhale Whale and Dolphin Identification Challenge aimed to identify individual whales and dolphins from images taken in the wild. This is a critical problem in marine biology research where individual identification helps track migration patterns, population dynamics, and conservation efforts.
+## Problem
 
-### Problem Statement
-- **Task**: Multi-class classification to identify individual whales/dolphins from images
-- **Input**: Images of whales and dolphins in their natural habitat
-- **Output**: Top-5 predictions with confidence scores for each individual
-- **Dataset**: ~25,000 training images, ~7,960 test images
-- **Classes**: ~5,004 unique individual whales/dolphins
-- **Evaluation**: Mean Average Precision @ 5 (MAP@5)
+The task is to identify an individual humpback whale from a photograph of its tail.
+Predictions are ranked whale IDs, with `new_whale` representing an unseen individual.
+The metric is **MAP@5**: with one correct identity per image, an earlier correct guess
+receives more credit than a later one. See the [competition evaluation and submission format](https://www.kaggle.com/competitions/humpback-whale-identification/overview/abstract).
 
-### Challenge Characteristics
-- **Fine-grained Classification**: Distinguishing between very similar individuals
-- **Class Imbalance**: Highly imbalanced dataset with many singleton classes
-- **Domain Adaptation**: Images taken in various lighting and weather conditions
-- **Limited Data**: Small number of images per individual whale
-- **Similarity Learning**: Need to learn robust embeddings for individual identification
+This is difficult because tails can look similar across individuals, while photographs
+of the same individual vary in pose, lighting, background, and crop.
+Sparse examples make ordinary multiclass classification a fragile starting point.
+The unknown-identity case also requires a decision beyond choosing the largest logit.
 
-## 🚀 Solution Architecture
+The old write-up linked to the later Happywhale whale-and-dolphin competition.
+I use the Humpback Whale Identification link here because the retained code uses its
+`Image,Id` schema and `new_whale` convention, consistent with the dataset described
+in the original write-up. No final score or competition placement is preserved here.
 
-### 1. Multi-Stage Training Pipeline
+## Data
 
-**Progressive Training Strategy**: Implemented a sophisticated multi-stage approach:
+I use `train.csv` to map image filenames in `train/` to whale IDs.
+Test photographs live in `test/`; `sample_submission.csv` provides their output order.
+These are image inputs, with no tabular feature branch.
+The [competition data page](https://www.kaggle.com/competitions/humpback-whale-identification/data)
+describes the image-to-identity mapping and unknown-whale label.
 
-```python
-# Stage 1: Basic Classification
-pipeline.train_classification_model(
-    train_csv_path="data/train.csv",
-    image_dir="data/train",
-    model_name="classification"
-)
+Images can have different dimensions and color modes. The loader converts them to RGB,
+resizes them to a square, and produces normalized channel-first tensors.
+The production configuration uses an image size of 448 and ImageNet normalization.
 
-# Stage 2: Pseudo Labeling
-pipeline.train_with_pseudo_labels(
-    train_csv_path="data/train.csv",
-    pseudo_csv_path="data/pseudo_labels.csv",
-    image_dir="data/train",
-    model_name="pseudo_label"
-)
+The important data quirks are unequal identity frequencies, singleton identities,
+and the fact that `new_whale` does not describe one visually coherent individual.
+I exclude `new_whale` from known-identity training and keep singleton identities
+in the training split. Duplicate filenames are rejected; visual duplicates are not detected.
+No supplied data audit establishes a leak or quantifies label noise.
 
-# Stage 3: Center Loss Training
-pipeline.train_classification_model(
-    train_csv_path="data/train.csv",
-    image_dir="data/train",
-    use_center_loss=True,
-    model_name="center_loss"
-)
+## Approach
 
-# Stage 4: Siamese Network
-pipeline.train_siamese_model(
-    train_csv_path="data/train.csv",
-    image_dir="data/train",
-    backbone_path="models/center_loss/model.pth",
-    model_name="siamese"
-)
+### Validation that leaves an identity to learn
+
+I preserve the original split: hold out the first image in CSV order for each identity
+with repeated observations, and train on its remaining images.
+Singletons stay in training. This is a deterministic known-identity holdout,
+not an identity-disjoint test of unseen-whale recognition.
+
+An explicit `--val_csv` can replace that split. Its image names must be disjoint
+from `--train_csv`, and its known IDs must occur in the training vocabulary.
+The vocabulary is fitted once and stored in every checkpoint.
+Classification logs now report MAP@5; checkpoint selection uses validation loss.
+
+### Preprocessing and features
+
+I use horizontal flips, modest affine perturbations, and brightness/contrast changes
+on training images. Validation and inference use only resize and normalization.
+These transformations encourage tolerance to photographic variation; their effect
+on asymmetric tail markings deserves validation rather than assumption.
+
+The CNN supplies the features. Global maximum and average pooling are concatenated,
+so the head sees both strong local responses and broader spatial evidence.
+There is no separate handcrafted image-feature table.
+
+```mermaid
+flowchart TD
+    A[Image and Id CSV plus tail photographs] --> B[Known IDs and held-out images]
+    B --> C[RGB resize, augmentation, normalization]
+    C --> D[ResNet50 feature maps]
+    D --> E[Concatenated max and average pooling]
+    E --> F[Dense head with BatchNorm and dropout]
+    F --> G[Identity logits: cross-entropy]
+    F --> H[L2-normalized embedding: center loss]
+    H --> I[Frozen backbone and positive/negative image pairs]
+    I --> J[Pair features and binary similarity head]
+    G --> K[Rank known IDs; optional new_whale threshold]
+    J --> L[Score reference gallery, aggregate by identity]
+    L --> K
+    K --> M[Image,Id submission CSV]
 ```
 
-### 2. Advanced Model Architecture
+### Classification and center loss
 
-**ResNet50 with Custom Head**: Enhanced ResNet50 backbone with specialized components:
+My default backbone is an ImageNet-initialized ResNet50.
+The pooled features feed a 2048-unit head with BatchNorm and dropout,
+a classification layer, and an L2-normalized 256-dimensional embedding.
+The number of output classes is inferred from the known IDs in the supplied CSV.
 
-```python
-class WhaleResNet(nn.Module):
-    def __init__(self, num_classes=5004, freeze_layers=None):
-        super().__init__()
-        
-        # Pretrained ResNet50 backbone
-        backbone = resnet50(pretrained=True)
-        self.backbone = nn.Sequential(*list(backbone.children())[:-2])
-        
-        # Custom head with adaptive pooling
-        head = [
-            AdaptiveConcatPool2d(1),  # Global average + max pooling
-            Flatten(),
-            nn.BatchNorm1d(4096),
-            nn.Dropout(0.25),
-            nn.Linear(4096, 2048, bias=False),
-            nn.ReLU(),
-            nn.BatchNorm1d(2048),
-            nn.Dropout(0.33)
-        ]
-        self.head = nn.Sequential(*head)
-        
-        # Dual output: classification + embedding
-        self.classifier = nn.Linear(2048, num_classes, bias=True)
-        self.embedding = nn.Linear(2048, 256, bias=False)
-```
+Cross-entropy supervises identity logits. In the center-loss variant, I also penalize
+the squared distance between an embedding and its learned identity center.
+The centers are optimized and saved alongside the network.
+This encourages compact identity clusters, while classification separates identities.
+The classification-only variant does not directly supervise its embedding projection;
+I therefore use the center-loss checkpoint as the default Siamese backbone.
 
-**Key Design Decisions**:
-- **Adaptive Concat Pooling**: Combines global average and max pooling for richer features
-- **Dual Output**: Classification head for training, embedding head for similarity
-- **Progressive Unfreezing**: Gradually unfreeze layers during training
-- **L2 Normalization**: Normalized embeddings for better similarity computation
+I retain the custom AdamW optimizer and cosine schedule with warm restarts.
+The scheduler advances once per epoch. The default backbone freeze setting leaves
+its last block trainable; this code does not implement staged unfreezing.
+Training batches avoid singleton batches because the dense head uses BatchNorm.
 
-### 3. Center Loss for Metric Learning
+### Optional pseudo-label pretraining
 
-**Center Loss Implementation**: Added center loss to learn discriminative embeddings:
+A supplied pseudo-label CSV uses the same `Image,Id` columns and known-ID vocabulary.
+If it includes `confidence`, I filter it using the configured threshold.
+I pretrain a classifier on these images and then fine-tune that same model on real labels.
+Held-out competition filenames are excluded from pseudo-label training.
+A separate image directory is supported for external pseudo-labeled images.
 
-```python
-class CenterLoss(nn.Module):
-    def __init__(self, num_classes=5004, feat_dim=256, use_gpu=True):
-        super().__init__()
-        self.num_classes = num_classes
-        self.feat_dim = feat_dim
-        self.centers = nn.Parameter(torch.randn(num_classes, feat_dim))
-    
-    def forward(self, x, labels):
-        # Compute distances to class centers
-        distmat = torch.pow(x, 2).sum(dim=1, keepdim=True).expand(batch_size, self.num_classes) + \
-                  torch.pow(self.centers, 2).sum(dim=1, keepdim=True).expand(self.num_classes, batch_size).t()
-        distmat.addmm_(1, -2, x, self.centers.t())
-        
-        # Extract distances for true classes
-        mask = labels.eq(classes.expand(batch_size, self.num_classes))
-        dist = [distmat[i][mask[i]] for i in range(batch_size)]
-        
-        return torch.cat(dist).mean()
-```
+The repository consumes pseudo labels; it does not generate them or provide an external dataset.
+The basic classifier, pseudo-label model, and center-loss model are separate experiments.
+Only pseudo pretraining and its real-label fine-tuning share a continuing optimizer/model.
 
-**Benefits**:
-- **Discriminative Embeddings**: Forces similar individuals to cluster together
-- **Better Generalization**: Improves performance on unseen individuals
-- **Metric Learning**: Learns meaningful distance relationships
+### Siamese comparison and submission
 
-### 4. Siamese Network for Similarity Learning
+I freeze the center-loss backbone and train a binary head on same/different-identity pairs.
+Its features concatenate both embeddings, their sum, their product, and their absolute difference.
+Frozen backbone BatchNorm and dropout stay in evaluation mode during pair training.
+Positive training pairs use distinct photographs; negative pairs use different known IDs.
+Validation pairs compare held-out anchors against training references.
 
-**Pair-based Learning**: Implemented siamese network for direct similarity learning:
+At inference, the repaired Siamese path caches reference embeddings and scores each query
+against the gallery in batches. The maximum reference score for each identity determines
+its rank. Pair generation and gallery inference complete previously unfinished paths;
+they are not evidence of a recovered historical leaderboard result.
 
-```python
-class SiameseNetwork(nn.Module):
-    def forward(self, image1, image2):
-        # Get embeddings from both images
-        _, embed1 = self.backbone(image1)
-        _, embed2 = self.backbone(image2)
-        
-        # Create feature combinations
-        add_feat = embed1 + embed2
-        mul_feat = embed1 * embed2
-        diff_feat = torch.abs(embed1 - embed2)
-        
-        # Concatenate all features
-        combined_feats = torch.cat([embed1, embed2, add_feat, mul_feat, diff_feat], dim=1)
-        
-        # Apply normalization and classification
-        combined_feats = self.norm(combined_feats)
-        output = self.sigmoid(self.head(combined_feats))
-        
-        return output
-```
+Both inference paths output space-separated whale IDs, without numeric encodings or probabilities.
+An optional `--new_whale_threshold` inserts the unknown label at the score cutoff.
+It is disabled by default and needs calibration; the known-identity holdout cannot establish
+its quality. Classifier probabilities and Siamese scores need separate calibration.
+The full-pipeline command writes the center-loss classifier submission.
+No ensemble weighting or historical final blend is available in the retained code.
 
-**Feature Engineering**:
-- **Element-wise Addition**: Captures shared features
-- **Element-wise Multiplication**: Captures interaction features
-- **Absolute Difference**: Captures distinguishing features
-- **Concatenation**: Preserves all information for final decision
+## What mattered most
 
-### 5. Advanced Data Augmentation
+These are the design priorities visible in my solution, not measured ablation gains:
 
-**Albumentations Pipeline**: Comprehensive augmentation strategy:
+- Preserve identity information through the split, label encoder, checkpoints, and submission.
+- Combine local maximum responses and average-pooled context in the classification head.
+- Add an embedding objective before using the network as a frozen similarity backbone.
+- Compare different photographs of an identity, rather than learning trivial self-matches.
+- Treat unknown-whale handling as a calibration problem separate from known-ID ranking.
 
-```python
-def _get_train_transforms(self):
-    return A.Compose([
-        A.HorizontalFlip(p=0.5),           # Mirror images
-        A.ShiftScaleRotate(rotate_limit=15, p=0.5),  # Geometric transforms
-        A.RandomBrightnessContrast(p=0.3), # Lighting variations
-        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
-    ])
-```
+## Repository layout
 
-**Augmentation Strategy**:
-- **Geometric Transforms**: Rotation, scaling, translation
-- **Photometric Transforms**: Brightness, contrast adjustments
-- **Preserve Identity**: Augmentations that don't change whale identity
-- **Robust Training**: Improves generalization to various conditions
-
-### 6. Sophisticated Training Strategy
-
-**Multi-Stage Learning**:
-
-1. **Pretraining**: Train on external whale data (pseudo labels)
-2. **Fine-tuning**: Adapt to competition-specific data
-3. **Progressive Unfreezing**: Gradually unfreeze backbone layers
-4. **Center Loss**: Add metric learning objective
-5. **Siamese Training**: Learn pairwise similarities
-
-**Training Configuration**:
-- **Optimizer**: AdamW with decoupled weight decay
-- **Scheduler**: Cosine annealing with warm restarts
-- **Loss Function**: Cross-entropy + Center loss
-- **Batch Size**: 64 for classification, 32 for siamese
-- **Learning Rates**: 1e-3 for classification, 1e-4 for siamese
-
-## 📊 Results and Performance
-
-### Model Performance
-- **Best Single Model**: Center Loss ResNet50 achieved strong performance
-- **Ensemble Strategy**: Combined multiple model predictions
-- **Final Score**: Competitive performance on private leaderboard
-
-### Key Insights
-1. **Center Loss Impact**: Significant improvement in embedding quality
-2. **Pseudo Labeling**: External data helped with generalization
-3. **Siamese Networks**: Effective for learning fine-grained similarities
-4. **Progressive Training**: Multi-stage approach crucial for convergence
-
-## 🛠️ Technical Implementation
-
-### Code Structure
-```
+```text
 whale/
-├── src/
-│   ├── __init__.py
-│   ├── config.py          # Configuration management
-│   ├── data_utils.py      # Data loading and preprocessing
-│   ├── models.py          # Model architectures
-│   ├── trainer.py         # Training loops and utilities
-│   ├── pipeline.py        # End-to-end pipeline
-│   ├── optimizer.py       # Custom AdamW optimizer
-│   └── scheduler.py       # Cosine annealing scheduler
-├── main.py               # Command-line interface
-├── example_usage.py      # Usage examples
-├── requirements.txt      # Dependencies
-├── setup.py             # Package setup
-└── README.md            # This file
+├── README.md             # Method, limitations, and runnable commands
+├── main.py               # Training and prediction CLI
+├── example_usage.py      # Python API examples for individual stages
+├── dry_run.py            # Offline synthetic pipeline and regression assertions
+├── requirements.txt      # Runtime dependencies
+├── setup.py              # Package metadata and whale-train console entry point
+├── .gitignore            # Generated data, outputs, and Python build artifacts
+└── src/
+    ├── __init__.py       # Package marker
+    ├── config.py         # Paths, model settings, device, and small-run options
+    ├── data_utils.py     # Image transforms, vocabulary, splits, and image pairs
+    ├── models.py         # ResNet head, center loss, Siamese head, and metrics
+    ├── trainer.py        # Training, validation, and self-describing checkpoints
+    ├── pipeline.py       # Training stages, gallery scoring, and decoded predictions
+    ├── optimizer.py      # Original decoupled-weight-decay AdamW implementation
+    └── scheduler.py      # Cosine learning rates with guarded restart periods
 ```
 
-### Key Features
-- **Modular Design**: Clean separation of concerns
-- **Configurable**: Easy to modify hyperparameters
-- **Extensible**: Simple to add new models or training strategies
-- **Reproducible**: Deterministic training with proper seeding
-- **Scalable**: Efficient data loading and training
+## How to run
 
-## 🚀 Getting Started
-
-### Installation
+Use Python 3.11 or later from this folder:
 
 ```bash
-# Clone the repository
-git clone https://github.com/ujjwalrao/kaggle-whale-identification.git
-cd kaggle-whale-identification
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install package in development mode
-pip install -e .
+python -m pip install -r requirements.txt
 ```
 
-### Data Preparation
+Download and extract the competition data yourself into this layout:
 
-```bash
-# Organize your data as follows:
+```text
 data/
-├── train/
-│   ├── image1.jpg
-│   ├── image2.jpg
-│   └── ...
-├── test/
-│   ├── test1.jpg
-│   ├── test2.jpg
-│   └── ...
-├── train.csv
-└── pseudo_labels.csv  # Optional external data
+├── train.csv              # Image,Id; image names relative to train/
+├── sample_submission.csv  # Image,Id; its row order is preserved
+├── train/                 # Training JPEGs
+├── test/                  # Test JPEGs
+└── pseudo_labels.csv      # Optional Image,Id[,confidence]
 ```
 
-### Training Models
+Train the center-loss model and write a submission:
 
 ```bash
-# Basic classification training
-python main.py --mode train_classification \
-               --data_dir data \
-               --train_csv data/train.csv \
-               --epochs 20 \
-               --batch_size 64
-
-# Training with center loss
-python main.py --mode train_center_loss \
-               --data_dir data \
-               --train_csv data/train.csv \
-               --epochs 20
-
-# Full pipeline training
-python main.py --mode full_pipeline \
-               --data_dir data \
-               --train_csv data/train.csv \
-               --epochs 20
+python main.py --mode train_center_loss --data_dir data \
+  --epochs 20 --batch_size 64 --model_dir models
+python main.py --mode predict --data_dir data \
+  --model_path models/center_loss/model.pth \
+  --test_csv data/sample_submission.csv --output_file submission.csv
 ```
 
-### Generating Predictions
+Run all training variants, then predict with the learned pair model if desired:
 
 ```bash
-# Generate predictions
-python main.py --mode predict \
-               --data_dir data \
-               --model_path models/center_loss/model.pth \
-               --output_file submission.csv
+python main.py --mode full_pipeline --data_dir data --model_dir models \
+  --test_csv data/sample_submission.csv --output_file submission.csv
+python main.py --mode predict --model_type siamese --data_dir data \
+  --model_path models/siamese/model.pth --output_file siamese_submission.csv
 ```
 
-### Using the Python API
+`full_pipeline` skips pseudo-label pretraining when its optional CSV is absent.
+Use `--pseudo_image_dir` when those images live elsewhere.
+Siamese training needs repeated identities remaining after the holdout and distinct identities
+for negative pairs. Inference with the pair model requires the labeled training gallery.
 
-```python
-from src.config import Config
-from src.pipeline import WhaleIdentificationPipeline
+Paths are configurable; `--train_csv`, `--val_csv`, and `--test_csv` override CSV locations.
+`--device cpu` forces CPU execution; otherwise CUDA is selected when available.
+The production default may download ImageNet weights on first training.
+`--no_pretrained` disables that download, and checkpoint inference never needs it.
+Check `python main.py --help` for all options.
 
-# Create configuration
-config = Config(
-    data_dir="data",
-    image_size=448,
-    batch_size=64,
-    learning_rate=1e-3,
-    num_epochs=20
-)
+### Offline dry run
 
-# Initialize pipeline
-pipeline = WhaleIdentificationPipeline(config)
-
-# Train model
-history = pipeline.train_classification_model(
-    train_csv_path="data/train.csv",
-    image_dir="data/train",
-    use_center_loss=True,
-    model_name="center_loss"
-)
-
-# Generate predictions
-submission = pipeline.predict(
-    test_image_dir="data/test",
-    model_path="models/center_loss/model.pth",
-    model_type="classification"
-)
-```
-
-## 🔬 Advanced Usage
-
-### Custom Model Architecture
-
-```python
-from src.models import WhaleResNet
-
-# Create custom model
-model = WhaleResNet(
-    num_classes=5004,
-    freeze_layers=3  # Freeze first 3 layers
-)
-
-# Modify architecture
-model.classifier = nn.Linear(2048, 1000)  # Reduce classes
-model.embedding = nn.Linear(2048, 512)    # Increase embedding dim
-```
-
-### Custom Training Loop
-
-```python
-from src.trainer import Trainer, ModelCheckpoint
-
-# Initialize trainer
-trainer = Trainer(model, device='cuda')
-
-# Custom checkpointing
-checkpoint = ModelCheckpoint(
-    save_dir="models/custom",
-    monitor='val_loss',
-    mode='min',
-    save_best_only=True
-)
-
-# Train with custom parameters
-history = trainer.train(
-    train_loader=train_loader,
-    val_loader=val_loader,
-    optimizer=optimizer,
-    loss_fn=loss_fn,
-    metric_fn=metric_fn,
-    num_epochs=30,
-    checkpoint=checkpoint
-)
-```
-
-### Hyperparameter Tuning
-
-```python
-# Grid search example
-learning_rates = [1e-4, 1e-3, 1e-2]
-batch_sizes = [32, 64, 128]
-image_sizes = [224, 448]
-
-for lr in learning_rates:
-    for batch_size in batch_sizes:
-        for image_size in image_sizes:
-            config = Config(
-                learning_rate=lr,
-                batch_size=batch_size,
-                image_size=image_size
-            )
-            
-            pipeline = WhaleIdentificationPipeline(config)
-            # Train and evaluate...
-```
-
-## 📈 Performance Optimization
-
-### Memory Optimization
-- **Gradient Accumulation**: Train with larger effective batch sizes
-- **Mixed Precision**: Use FP16 for faster training
-- **Data Loading**: Optimized data loaders with multiple workers
-
-### Training Speed
-- **Progressive Resizing**: Start with smaller images, increase gradually
-- **Learning Rate Scheduling**: Cosine annealing with warm restarts
-- **Early Stopping**: Prevent overfitting with validation monitoring
-
-### Model Efficiency
-- **Model Pruning**: Remove unnecessary parameters
-- **Knowledge Distillation**: Train smaller models from larger ones
-- **Quantization**: Reduce model size for deployment
-
-## 🧪 Experimental Features
-
-### Advanced Augmentation
-- **Mixup**: Interpolate between training examples
-- **CutMix**: Combine parts of different images
-- **AutoAugment**: Learn optimal augmentation policies
-
-### Ensemble Methods
-- **Model Averaging**: Combine multiple model predictions
-- **Stacking**: Train meta-model on base model predictions
-- **Bagging**: Train models on different data subsets
-
-### Loss Functions
-- **Focal Loss**: Handle class imbalance better
-- **Label Smoothing**: Improve generalization
-- **Triplet Loss**: Alternative metric learning approach
-
-## 📚 References and Acknowledgments
-
-### Key Papers
-1. **Center Loss**: "A Discriminative Feature Learning Approach for Deep Face Recognition" (Wen et al., 2016)
-2. **Siamese Networks**: "Siamese Neural Networks for One-shot Image Recognition" (Koch et al., 2015)
-3. **ResNet**: "Deep Residual Learning for Image Recognition" (He et al., 2016)
-4. **AdamW**: "Decoupled Weight Decay Regularization" (Loshchilov & Hutter, 2017)
-
-### Datasets
-- **Happywhale Challenge**: Kaggle competition dataset
-- **External Whale Data**: Additional whale images for pseudo labeling
-
-### Libraries and Tools
-- **PyTorch**: Deep learning framework
-- **Albumentations**: Image augmentation library
-- **scikit-learn**: Machine learning utilities
-- **Pandas**: Data manipulation
-- **NumPy**: Numerical computing
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-### Development Setup
 ```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
-
-# Format code
-black src/
-
-# Lint code
-flake8 src/
+python dry_run.py
+# Interpreter used to verify this checkout:
+/Users/ujjwal/Downloads/solo/kaggle/.venv/bin/python dry_run.py
 ```
 
-## 📄 License
+I generate synthetic JPEGs and competition-shaped CSVs under `sample_data/`.
+The smoke configuration uses random-init ResNet18, small heads, 32-pixel inputs,
+and one epoch per stage on CPU. ResNet50 remains the production default.
+It exercises preprocessing, feature extraction, classification, pseudo-label fine-tuning,
+center loss, Siamese training, gallery scoring, checkpoint reloads, and CSV output.
+Assertions check finite histories, split separation, MAP calculation, and decoded submission IDs.
+Outputs and checkpoints go to `dry_run_output/`; the main result is `submission.csv` there.
+No stages are skipped and no pretrained weights or competition data are downloaded.
+This checks execution and data contracts, not model quality on whale photographs.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Lessons / what I'd do differently
 
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-*This project demonstrates advanced deep learning techniques for fine-grained image classification and metric learning. The multi-stage training pipeline, center loss implementation, and siamese network architecture showcase sophisticated approaches to solving challenging computer vision problems.*
+- I would add an identity-disjoint validation set and calibrate `new_whale` on unseen identities.
+- I would audit visual duplicates and crop quality before interpreting validation improvements.
+- I would preserve experiment manifests, ablations, and the final submission blend with the code.
+- I would test whether flip augmentation and the current resize preserve useful tail asymmetry.

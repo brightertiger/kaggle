@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import resnet50
+from torchvision.models import resnet50, resnet18, ResNet50_Weights, ResNet18_Weights
 from typing import Tuple, Optional
 
 class AdaptiveConcatPool2d(nn.Module):
@@ -29,61 +29,50 @@ class CenterLoss(nn.Module):
         self.feat_dim = feat_dim
         self.use_gpu = use_gpu
         
-        if self.use_gpu:
-            self.centers = nn.Parameter(torch.randn(self.num_classes, self.feat_dim).cuda())
-        else:
-            self.centers = nn.Parameter(torch.randn(self.num_classes, self.feat_dim))
-    
+        self.centers = nn.Parameter(torch.randn(num_classes, feat_dim))
+        if use_gpu and torch.cuda.is_available():
+            self.cuda()
+
     def forward(self, x, labels):
-        batch_size = x.size(0)
-        
-        # Compute pairwise distances
-        distmat = torch.pow(x, 2).sum(dim=1, keepdim=True).expand(batch_size, self.num_classes) + \
-                  torch.pow(self.centers, 2).sum(dim=1, keepdim=True).expand(self.num_classes, batch_size).t()
-        distmat.addmm_(1, -2, x, self.centers.t())
-        
-        classes = torch.arange(self.num_classes).long()
-        if self.use_gpu:
-            classes = classes.cuda()
-        
-        labels = labels.unsqueeze(1).expand(batch_size, self.num_classes)
-        mask = labels.eq(classes.expand(batch_size, self.num_classes))
-        
-        dist = []
-        for i in range(batch_size):
-            value = distmat[i][mask[i]]
-            value = value.clamp(min=1e-12, max=1e+12)
-            dist.append(value)
-        
-        dist = torch.cat(dist)
-        loss = dist.mean()
-        return loss
+        # Same squared distance objective, without allocating batch x all classes.
+        return (x - self.centers[labels]).square().sum(dim=1).clamp(1e-12, 1e12).mean()
 
 class WhaleResNet(nn.Module):
-    def __init__(self, num_classes: int = 5004, freeze_layers: Optional[int] = None):
+    def __init__(self, num_classes: int = 5004, freeze_layers: Optional[int] = None,
+                 embedding_dim: int = 256, pretrained: bool = True,
+                 backbone_name: str = "resnet50", head_dim: int = 2048):
         super().__init__()
         
         # Load pretrained ResNet50 backbone
-        backbone = resnet50(pretrained=True)
+        factories = {"resnet50": (resnet50, ResNet50_Weights.DEFAULT),
+                     "resnet18": (resnet18, ResNet18_Weights.DEFAULT)}
+        if backbone_name not in factories:
+            raise ValueError(f"Unsupported backbone: {backbone_name}")
+        factory, weights = factories[backbone_name]
+        backbone = factory(weights=weights if pretrained else None)
+        pooled_dim = backbone.fc.in_features * 2
+        self.model_kwargs = dict(num_classes=num_classes, embedding_dim=embedding_dim,
+                                 backbone_name=backbone_name, head_dim=head_dim)
+        self.class_names = None
         self.backbone = nn.Sequential(*list(backbone.children())[:-2])
         
         # Custom head
         head = [
             AdaptiveConcatPool2d(1),
             Flatten(),
-            nn.BatchNorm1d(4096),
+            nn.BatchNorm1d(pooled_dim),
             nn.Dropout(0.25),
-            nn.Linear(4096, 2048, bias=False),
+            nn.Linear(pooled_dim, head_dim, bias=False),
             nn.ReLU(),
-            nn.BatchNorm1d(2048),
+            nn.BatchNorm1d(head_dim),
             nn.Dropout(0.33)
         ]
         self.head = nn.Sequential(*head)
         self.head.apply(self._init_weights)
         
         # Classification and embedding layers
-        self.classifier = nn.Linear(2048, num_classes, bias=True)
-        self.embedding = nn.Linear(2048, 256, bias=False)
+        self.classifier = nn.Linear(head_dim, num_classes, bias=True)
+        self.embedding = nn.Linear(head_dim, embedding_dim, bias=False)
         
         # Freeze layers if specified
         if freeze_layers:
@@ -108,24 +97,28 @@ class WhaleResNet(nn.Module):
         return preds, embed
 
 class SiameseNetwork(nn.Module):
-    def __init__(self, backbone_path: str, freeze_backbone: bool = True, 
-                 resnet_layers: Optional[int] = None):
+    def __init__(self, backbone_path: Optional[str] = None, freeze_backbone: bool = True,
+                 resnet_layers: Optional[int] = None, model_kwargs=None):
         super().__init__()
         
-        # Load pretrained backbone
-        self.backbone = WhaleResNet(freeze_layers=resnet_layers)
+        checkpoint = None
         if backbone_path:
-            checkpoint = torch.load(backbone_path)
+            checkpoint = torch.load(backbone_path, map_location="cpu", weights_only=True)
+            model_kwargs = checkpoint.get('model_kwargs', model_kwargs)
+        model_kwargs = dict(model_kwargs or {})
+        model_kwargs['pretrained'] = False
+        self.backbone = WhaleResNet(freeze_layers=resnet_layers, **model_kwargs)
+        if checkpoint:
             self.backbone.load_state_dict(checkpoint['model_state_dict'])
-        
-        # Freeze backbone if specified
+        self.model_kwargs = self.backbone.model_kwargs
+        self.class_names = checkpoint.get('class_names') if checkpoint else None
+        self.freeze_backbone = freeze_backbone
         if freeze_backbone:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-        
-        # Siamese head
-        self.norm = nn.BatchNorm1d(1280)  # 256 * 5 features
-        self.head = nn.Linear(1280, 1)
+            self.backbone.requires_grad_(False)
+            self.backbone.eval()
+        feature_dim = self.model_kwargs['embedding_dim'] * 5
+        self.norm = nn.BatchNorm1d(feature_dim)
+        self.head = nn.Linear(feature_dim, 1)
         self.sigmoid = nn.Sigmoid()
         
         self.head.apply(self._init_weights)
@@ -134,11 +127,20 @@ class SiameseNetwork(nn.Module):
         if isinstance(layer, nn.Linear):
             nn.init.kaiming_normal_(layer.weight)
     
+    def train(self, mode=True):
+        super().train(mode)
+        if self.freeze_backbone:
+            self.backbone.eval()  # Keep frozen BatchNorm buffers and dropout fixed.
+        return self
+
     def forward(self, image1, image2):
         # Get embeddings from both images
         _, embed1 = self.backbone(image1)
         _, embed2 = self.backbone(image2)
         
+        return self.score_embeddings(embed1, embed2)
+
+    def score_embeddings(self, embed1, embed2):
         # Create feature combinations
         add_feat = embed1 + embed2
         mul_feat = embed1 * embed2
@@ -160,10 +162,10 @@ class Accuracy(nn.Module):
     
     def forward(self, output, target):
         batch_size = target.size(0)
-        _, pred = output.topk(self.topk, 1, True, True)
+        _, pred = output.topk(min(self.topk, output.shape[1]), 1, True, True)
         pred = pred.t()
         correct = pred.eq(target.view(1, -1).expand_as(pred))
-        correct_k = correct[:self.topk].view(-1).float().sum(0)
+        correct_k = correct[:self.topk].reshape(-1).float().sum(0)
         result = correct_k.mul_(100.0 / batch_size)
         return result
 
@@ -177,3 +179,17 @@ class BinaryAccuracy(nn.Module):
         correct = (output == target).float().sum()
         correct = correct.mul_(100.0 / batch_size)
         return correct
+
+
+class MeanAveragePrecision(nn.Module):
+    """MAP@k for one relevant identity per image (mean reciprocal rank)."""
+    def __init__(self, topk=5):
+        super().__init__()
+        self.topk = topk
+
+    def forward(self, output, target):
+        k = min(self.topk, output.shape[1])
+        indices = output.topk(k, dim=1).indices
+        hits = indices.eq(target.reshape(-1, 1))
+        ranks = torch.arange(1, k + 1, device=output.device)
+        return (hits / ranks).sum(dim=1).mean()

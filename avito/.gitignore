@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+/sample_data/
+/dry_run_output/
+/data/
+/output/

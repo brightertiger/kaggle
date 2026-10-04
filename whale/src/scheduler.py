@@ -1,6 +1,4 @@
-import torch
 import math
-import numpy as np
 from torch.optim.lr_scheduler import _LRScheduler
 
 class CosineLR(_LRScheduler):
@@ -19,6 +17,8 @@ class CosineLR(_LRScheduler):
     """
     
     def __init__(self, optimizer, T_max, eta_min=0, last_epoch=-1, T_mult=1):
+        if T_max <= 0 or T_mult <= 0:
+            raise ValueError("Scheduler periods must be positive")
         self.T_max = T_max
         self.T_mult = T_mult
         self.restart_every = T_max
@@ -29,14 +29,15 @@ class CosineLR(_LRScheduler):
 
     def restart(self):
         """Restart the scheduler with increased period."""
-        self.restart_every = int(self.restart_every * self.T_mult)
+        self.restart_every = max(1, int(self.restart_every * self.T_mult))
         self.restarted_at = self.last_epoch
+        self.restarts += 1
         # Reduce learning rate by 10% after each restart
         self.base_lrs = [0.9 * base_lr for base_lr in self.base_lrs]
 
     def cosine(self, base_lr):
         """Compute cosine annealing learning rate."""
-        return np.max([
+        return max([
             self.eta_min, 
             base_lr * (1 + math.cos(math.pi * self.step_n / self.restart_every)) / 2
         ])

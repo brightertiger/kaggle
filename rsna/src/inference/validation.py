@@ -1,13 +1,9 @@
 import torch
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from typing import Dict, Any, List, Tuple
-import warnings
-warnings.filterwarnings('ignore')
+from typing import Dict, List
 
 from ..core import Config
-from ..models import create_model
 from ..data import create_data_loaders
 from .predictor import ModelPredictor, load_trained_model
 
@@ -23,10 +19,8 @@ class ModelValidator:
         print(f"Validating fold {fold_idx} with {model_name}")
         
         # Load trained model
-        model_path = self.config.MODEL_DIR / f"model_{fold_idx}.pt"
-        if not model_path.exists():
-            model_path = self.config.MODEL_DIR / "best_model.pt"
-        
+        model_path = self.config.checkpoint_dir(model_name, fold_idx) / 'best_model.pt'
+
         if not model_path.exists():
             raise FileNotFoundError(f"No trained model found for fold {fold_idx}")
         
@@ -55,12 +49,13 @@ class ModelValidator:
         validation_df = validation_df.merge(
             train_data[['image'] + self.config.CLASS_NAMES], 
             on='image', 
-            suffixes=('_pred', '_true')
+            suffixes=('_pred', '_true'), validate='one_to_one'
         )
         
         model = model.cpu()
         del model, predictor
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         return validation_df
     
@@ -71,26 +66,23 @@ class ModelValidator:
         
         all_validations = []
         
+        self.config.ensure_output_dirs()
         for fold_idx in range(1, self.config.NUM_FOLDS + 1):
-            try:
-                fold_validation = self.validate_fold(fold_idx, model_name)
-                all_validations.append(fold_validation)
-                
-                # Save individual fold validation
-                validation_path = self.config.OUTPUT_DIR / f"validation_fold_{fold_idx}.csv"
-                fold_validation.to_csv(validation_path, index=False)
-                
-                print(f"Fold {fold_idx} validation completed")
-                
-            except Exception as e:
-                print(f"Error validating fold {fold_idx}: {e}")
-        
+            fold_validation = self.validate_fold(fold_idx, model_name)
+            all_validations.append(fold_validation)
+            validation_path = self.config.OUTPUT_DIR / f'validation_fold_{fold_idx}.csv'
+            fold_validation.to_csv(validation_path, index=False)
+
         return all_validations
     
     def calculate_metrics(self, validation_df: pd.DataFrame) -> Dict[str, float]:
         """Calculate validation metrics"""
         
-        metrics = {}
+        truth = validation_df[[f'{c}_true' for c in self.config.CLASS_NAMES]].to_numpy()
+        probs = validation_df[[f'{c}_pred' for c in self.config.CLASS_NAMES]].to_numpy()
+        probs = np.clip(probs.astype(np.float64), 1e-7, 1 - 1e-7)
+        bce = -(truth * np.log(probs) + (1 - truth) * np.log1p(-probs))
+        metrics = {'weighted_log_loss': float(np.average(bce.mean(axis=0), weights=[2, 1, 1, 1, 1, 1]))}
         
         for class_name in self.config.CLASS_NAMES:
             pred_col = f"{class_name}_pred"
@@ -147,6 +139,7 @@ class ModelValidator:
         overall_metrics = self.calculate_metrics(combined_validation)
         
         report.append(f"\nOverall Performance:")
+        report.append(f"- Weighted log loss: {overall_metrics['weighted_log_loss']:.6f}")
         report.append(f"- Total validation samples: {len(combined_validation):,}")
         report.append(f"- Number of folds: {len(all_validations)}")
         

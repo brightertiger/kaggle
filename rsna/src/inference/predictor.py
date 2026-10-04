@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from tqdm import tqdm
-import torch.nn.functional as F
 from pathlib import Path
 
 from ..core import Config
@@ -14,7 +13,7 @@ class ModelPredictor:
     """Prediction class for intracranial hemorrhage detection models"""
     
     def __init__(self, model: nn.Module, device: str, config: Config):
-        self.model = model
+        self.model = model.to(device)
         self.device = device
         self.config = config
     
@@ -66,13 +65,15 @@ class ModelPredictor:
                 lambda x: torch.flip(x, dims=[3]),  # Horizontal flip
             ]
         
+        if not tta_transforms:
+            raise ValueError("At least one TTA transform is required")
         all_tta_predictions = []
+        tta_indices = []
         
         for tta_idx, transform in enumerate(tta_transforms):
             print(f"TTA {tta_idx + 1}/{len(tta_transforms)}")
             
             tta_predictions = []
-            tta_indices = []
             
             self.model.eval()
             progress_bar = tqdm(data_loader, desc=f"TTA {tta_idx + 1}", leave=False)
@@ -100,9 +101,9 @@ class ModelPredictor:
 
 def load_trained_model(model_path: str, model_name: str, config: Config) -> nn.Module:
     """Load trained model from checkpoint"""
-    model = create_model(model_name, config.NUM_CLASSES)
+    model = create_model(model_name, config.NUM_CLASSES, pretrained=False)
     
-    checkpoint = torch.load(model_path, map_location='cpu')
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
     
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -110,12 +111,6 @@ def load_trained_model(model_path: str, model_name: str, config: Config) -> nn.M
         model.load_state_dict(checkpoint)
     
     model = model.to(config.DEVICE)
-    
-    try:
-        from apex import amp
-        model = amp.initialize(model, opt_level="O2", keep_batchnorm_fp32=True, verbosity=0)
-    except ImportError:
-        pass
     
     return model
 
@@ -125,16 +120,15 @@ def predict_fold(fold_idx: int, config: Config, model_name: str = 'resnext101') 
     
     print(f"Generating predictions for fold {fold_idx}")
     
-    model_path = config.MODEL_DIR / f"best_model.pt"
-    if not model_path.exists():
-        model_path = config.MODEL_DIR / f"model_{config.NUM_EPOCHS - 1}.pt"
-    
+    model_path = config.checkpoint_dir(model_name, fold_idx) / 'best_model.pt'
+
     model = load_trained_model(str(model_path), model_name, config)
     predictor = ModelPredictor(model, config.DEVICE, config)
     
     inference_loader = create_inference_loader(config)
     
-    results = predictor.predict_loader(inference_loader, apply_sigmoid=True)
+    results = (predictor.predict_with_tta(inference_loader) if config.USE_TTA else
+               predictor.predict_loader(inference_loader, apply_sigmoid=True))
     
     predictions_df = pd.DataFrame(
         results['predictions'], 
@@ -146,35 +140,39 @@ def predict_fold(fold_idx: int, config: Config, model_name: str = 'resnext101') 
     
     model = model.cpu()
     del model, predictor
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     
     return predictions_df
 
 def create_submission(predictions_list: List[pd.DataFrame], config: Config) -> pd.DataFrame:
     """Create final submission from multiple fold predictions"""
     
-    combined_predictions = pd.concat(predictions_list, ignore_index=True)
-    
-    ensemble_predictions = combined_predictions.groupby('image').mean().reset_index()
-    
-    submission_data = []
-    
-    for _, row in ensemble_predictions.iterrows():
-        image_id = row['image']
-        
-        for class_name in config.CLASS_NAMES:
-            submission_data.append({
-                'ID': f'ID_{image_id}_{class_name}',
-                'Label': row[class_name]
-            })
-    
-    submission_df = pd.DataFrame(submission_data)
-    
-    return submission_df
+    if len(predictions_list) != config.NUM_FOLDS:
+        raise ValueError('Expected predictions from every fold')
+    expected_images = pd.read_csv(config.TEST_CSV)['image'].tolist()
+    arrays = []
+    for frame in predictions_list:
+        if frame['image'].duplicated().any() or set(frame.image) != set(expected_images):
+            raise ValueError('Fold predictions must contain every test image exactly once')
+        arrays.append(frame.set_index('image').loc[expected_images, config.CLASS_NAMES].to_numpy())
+    averaged = np.mean(arrays, axis=0)
+    if not np.isfinite(averaged).all() or ((averaged < 0) | (averaged > 1)).any():
+        raise ValueError('Predictions must be finite probabilities')
+    predictions = pd.DataFrame(averaged, index=expected_images, columns=config.CLASS_NAMES)
+    values = {f'{image_id}_{name}': float(row[name])
+              for image_id, row in predictions.iterrows() for name in config.CLASS_NAMES}
+    submission = pd.read_csv(Path(config.DATA_DIR) / config.SAMPLE_SUBMISSION)
+    if submission.ID.duplicated().any() or set(submission.ID) != set(values):
+        raise ValueError('Predictions do not match the sample submission IDs')
+    submission['Label'] = submission['ID'].map(values)
+    return submission[['ID', 'Label']]
+
 
 def generate_all_predictions(config: Config, model_name: str = 'resnext101') -> pd.DataFrame:
     """Generate predictions for all folds and create ensemble submission"""
     
+    config.ensure_output_dirs()
     all_predictions = []
     
     for fold_idx in range(1, config.NUM_FOLDS + 1):

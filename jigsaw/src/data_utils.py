@@ -3,9 +3,8 @@
 import pandas as pd
 import numpy as np
 import os
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any
 from sklearn.model_selection import StratifiedKFold
-from pathlib import Path
 
 from .config import Config
 
@@ -27,6 +26,13 @@ class DataProcessor:
         print(f"Loading test data from: {test_path}")
         test_data = pd.read_csv(test_path)
         
+        for name, frame, required in [('train', train_data, ['id', 'comment_text'] + self.config.aux_labels + self.config.identity_columns),
+                                      ('test', test_data, ['id', 'comment_text'])]:
+            missing = set(required) - set(frame.columns)
+            if missing:
+                raise ValueError(f'{name}.csv missing columns: {sorted(missing)}')
+            if frame.empty or frame['id'].isna().any() or frame['id'].duplicated().any():
+                raise ValueError(f'{name}.csv needs nonempty rows and unique non-null IDs')
         print(f"Training data shape: {train_data.shape}")
         print(f"Test data shape: {test_data.shape}")
         
@@ -67,10 +73,10 @@ class DataProcessor:
         
         features = ['id', 'comment_text', 'weight']
         labels = ['target']
-        aux_labels = ['severe_toxicity', 'obscene', 'identity_attack', 'insult', 'threat']
+        aux_labels = [label for label in self.config.aux_labels if label != 'target']
         
-        prepared_data = weights.merge(data, on='id')
-        prepared_data = prepared_data[features + labels + aux_labels]
+        prepared_data = weights.merge(data, on='id', validate='one_to_one')
+        prepared_data = prepared_data[features + labels + aux_labels + self.config.identity_columns]
         
         prepared_data[labels] = prepared_data[labels].fillna(0.0)
         prepared_data[aux_labels] = prepared_data[aux_labels].fillna(0.0)

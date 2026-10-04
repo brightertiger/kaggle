@@ -1,7 +1,9 @@
-pandas>=1.3.0
-numpy>=1.21.0
-scikit-learn>=1.0.0
-matplotlib>=3.4.0
-seaborn>=0.11.0
+# Runnable src/, main.py, example_usage.py and dry_run.py (Python 3.11+).
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+scikit-learn>=1.4
 stop-words>=2018.7.23
-scipy>=1.7.0
+# Historical features/ and model/ scripts have a separate, unreconstructed
+# runtime (LightGBM, Keras/TensorFlow, OpenCV, Pillow, matplotlib and optional
+# MulticoreTSNE). They are source references, not dependencies of this pipeline.

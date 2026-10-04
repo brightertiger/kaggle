@@ -1,0 +1,4 @@
+# Install a mutually compatible TensorFlow / TensorFlow Text release for your platform.
+tensorflow>=2.16,<3
+tensorflow-hub>=0.16,<1
+tensorflow-text>=2.16,<3

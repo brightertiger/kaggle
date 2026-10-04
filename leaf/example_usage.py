@@ -1,34 +1,19 @@
-import sys
-import os
-import numpy as np
-
-sys.path.insert(0, os.path.dirname(__file__))
-
+"""Python API example; expects the official files in ./data."""
 from src.pipeline import CassavaPipeline
+from src.utils.config import Config
+
 
 def main():
-    pipeline = CassavaPipeline()
-    
-    print("=== Cassava Leaf Disease Classification Pipeline ===\n")
-    
-    print("1. Preparing data...")
-    pipeline.prepare_data('../../data')
-    
-    print("\n2. Training individual models...")
-    for version in ['version0', 'version1', 'version2']:
-        for fold in range(2):  # Train only 2 folds for demo
-            print(f"Training {version} fold {fold}")
-            pipeline.train_model(version, fold)
-    
-    print("\n3. Scoring models...")
-    for version in ['version0', 'version1', 'version2']:
-        pipeline.score_model(version, '../../data/test.csv')
-    
-    print("\n4. Creating ensemble...")
-    ensemble_results = pipeline.create_ensemble()
-    
-    print("\n=== Pipeline completed! ===")
-    print(f"Final ensemble accuracy: {np.mean([r['model_acc'] for r in ensemble_results]):.4f}")
+    config = Config(DATA_DIR='./data', OUTPUT_DIR='./output', VERSIONS=('version7',))
+    pipeline = CassavaPipeline(config)
+    pipeline.prepare_data()
+    for fold in range(config.N_FOLDS):
+        pipeline.train_model('version7', fold)
+    pipeline.score_model('version7')
+    results = pipeline.create_ensemble()
+    print(f'Mean blend-fold accuracy: {sum(r["model_acc"] for r in results) / len(results):.4f}')
+    print('Final predictions: ./output/submission.csv')
+
 
 if __name__ == '__main__':
     main()

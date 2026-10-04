@@ -3,9 +3,6 @@
 import argparse
 import sys
 from pathlib import Path
-import numpy as np
-
-sys.path.append(str(Path(__file__).parent / 'src'))
 
 from src.pipeline import SpookyAuthorPipeline
 from src.config import Config
@@ -25,13 +22,31 @@ def main():
     parser.add_argument('--show_importance', action='store_true',
                        help='Show feature importance after training')
     
+    parser.add_argument('--glove_path', type=Path, default=Config.GLOVE_PATH,
+                        help='Local GloVe text file matching EMBEDDING_DIM')
+    parser.add_argument('--nltk_data_dir', type=Path, default=Config.NLTK_DATA_DIR)
+    parser.add_argument('--random_embeddings', action='store_true',
+                        help='Use random embeddings instead of loading GloVe')
+    parser.add_argument('--nn_epochs', type=int, default=None,
+                        help='Override the staged neural training schedule')
+    parser.add_argument('--folds', type=int, default=Config.N_FOLDS)
+    parser.add_argument('--xgb_rounds', type=int, default=Config.XGB_NUM_ROUNDS)
     args = parser.parse_args()
+    if args.folds < 2 or args.xgb_rounds < 1 or (args.nn_epochs is not None and args.nn_epochs < 1):
+        parser.error('folds must be at least 2; epochs and rounds must be positive')
+    config = Config()
+    config.GLOVE_PATH = args.glove_path
+    config.NLTK_DATA_DIR = args.nltk_data_dir
+    config.RANDOM_EMBEDDINGS = args.random_embeddings
+    config.NN_EPOCHS = args.nn_epochs
+    config.N_FOLDS = args.folds
+    config.XGB_NUM_ROUNDS = args.xgb_rounds
     
     data_dir = Path(args.data_dir)
     model_dir = Path(args.model_dir)
     score_dir = Path(args.score_dir)
     
-    pipeline = SpookyAuthorPipeline(data_dir=data_dir, model_dir=model_dir, score_dir=score_dir)
+    pipeline = SpookyAuthorPipeline(data_dir=data_dir, model_dir=model_dir, score_dir=score_dir, config=config)
     
     try:
         if args.step == 'text_features':
@@ -55,17 +70,16 @@ def main():
             print(f"✅ XGBoost model trained")
             
         elif args.step == 'full':
-            fold_scores, predictions = pipeline.run_full_pipeline()
+            cv_history, predictions = pipeline.run_full_pipeline()
             print(f"🎉 Full pipeline completed successfully!")
             print(f"📁 Models saved to: {model_dir}")
             print(f"📁 Predictions saved to: {score_dir}")
             
-            if args.show_importance:
-                print("\n🔍 Top 20 Feature Importances:")
-                importance = pipeline.get_feature_importance()
-                for i, (feature, score) in enumerate(importance[:20]):
-                    print(f"{i+1:2d}. {feature}: {score:.2f}")
-        
+        if args.show_importance:
+            print('Top feature importances:')
+            for feature, score in pipeline.get_feature_importance()[:20]:
+                print(f'{feature}: {score:.2f}')
+
         print(f"\n📊 Final predictions shape: {predictions.shape if 'predictions' in locals() else 'N/A'}")
         
     except Exception as e:

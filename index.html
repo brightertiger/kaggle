@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ujjwal Singh Rao - Kaggle Portfolio</title>
     <link rel="stylesheet" href="styles.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet">
+    <script src="script.js" defer></script>
 </head>
 <body>
     <!-- Header -->
@@ -28,7 +29,7 @@
     <section class="about">
         <div class="container">
             <p class="about-text">
-                Kaggle Master with 3 Gold, 12 Silver, and 4 Bronze medals across 20 competitions.
+                Kaggle Master with 3 Gold, 12 Silver, and 4 Bronze medals across 25 competitions, with 20 solution write-ups.
                 Expertise in NLP, Computer Vision, Medical Imaging, and Optimization.
                 Highest rank: #3 out of 1,621 teams (Jigsaw Multilingual).
             </p>
@@ -41,6 +42,15 @@
             <h2>🏆 Competition Portfolio</h2>
             <p class="projects-subtitle">3 Gold 🥇 | 12 Silver 🥈 | 4 Bronze 🥉</p>
             
+            <div class="project-filters" role="group" aria-label="Filter competitions by medal" hidden>
+                <button type="button" data-filter="all" aria-pressed="true">All</button>
+                <button type="button" data-filter="gold" aria-pressed="false">Gold</button>
+                <button type="button" data-filter="silver" aria-pressed="false">Silver</button>
+                <button type="button" data-filter="bronze" aria-pressed="false">Bronze</button>
+                <button type="button" data-filter="other" aria-pressed="false">Other</button>
+            </div>
+            <p class="filter-status" role="status" aria-live="polite"></p>
+
             <div class="projects-grid">
                 <!-- Gold Medal Projects -->
                 <div class="project-card gold">
@@ -55,8 +65,8 @@
                         <span class="tag">Multilingual</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/jigsaw-multilingual-toxic-comment-classification" target="_blank">Competition</a>
-                        <a href="jigsawml/">Code</a>
+                        <a href="jigsawml/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/jigsawml">Code</a>
                     </div>
                 </div>
 
@@ -72,8 +82,8 @@
                         <span class="tag">TTA</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/siim-isic-melanoma-classification" target="_blank">Competition</a>
-                        <a href="siim/">Code</a>
+                        <a href="siim/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/siim">Code</a>
                     </div>
                 </div>
 
@@ -89,8 +99,8 @@
                         <span class="tag">Big Data</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/talkingdata-adtracking-fraud-detection" target="_blank">Competition</a>
-                        <a href="talking/">Code</a>
+                        <a href="talking/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/talking">Code</a>
                     </div>
                 </div>
 
@@ -107,25 +117,25 @@
                         <span class="tag">NLP</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/avito-demand-prediction-challenge" target="_blank">Competition</a>
-                        <a href="avito/">Code</a>
+                        <a href="avito/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/avito">Code</a>
                     </div>
                 </div>
 
                 <div class="project-card silver">
                     <div class="project-header">
-                        <h3>Google QUEST Q&A Labeling</h3>
+                        <h3>Google QUEST Q&amp;A Labeling</h3>
                         <div class="medal">🥈 #21 / 1,571</div>
                     </div>
-                    <p class="project-description">Top 1.3% finish. Q&A quality prediction using BERT and RoBERTa with custom head architectures.</p>
+                    <p class="project-description">Top 1.3% finish. Q&amp;A quality prediction using BERT and RoBERTa with custom head architectures.</p>
                     <div class="project-tags">
                         <span class="tag">NLP</span>
                         <span class="tag">BERT</span>
-                        <span class="tag">Q&A</span>
+                        <span class="tag">Q&amp;A</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/google-quest-challenge" target="_blank">Competition</a>
-                        <a href="quest/">Code</a>
+                        <a href="quest/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/quest">Code</a>
                     </div>
                 </div>
 
@@ -142,7 +152,6 @@
                     </div>
                     <div class="project-links">
                         <a href="https://www.kaggle.com/competitions/instacart-market-basket-analysis" target="_blank">Competition</a>
-                        <a href="amexpert/">Code</a>
                     </div>
                 </div>
 
@@ -173,8 +182,8 @@
                         <span class="tag">Attention</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/jigsaw-toxic-comment-classification-challenge" target="_blank">Competition</a>
-                        <a href="toxic/">Code</a>
+                        <a href="toxic/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/toxic">Code</a>
                     </div>
                 </div>
 
@@ -206,8 +215,8 @@
                         <span class="tag">Coreference</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/gendered-pronoun-resolution" target="_blank">Competition</a>
-                        <a href="pronoun/">Code</a>
+                        <a href="pronoun/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/pronoun">Code</a>
                     </div>
                 </div>
 
@@ -238,8 +247,8 @@
                         <span class="tag">CNN</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection" target="_blank">Competition</a>
-                        <a href="rsna/">Code</a>
+                        <a href="rsna/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/rsna">Code</a>
                     </div>
                 </div>
 
@@ -255,8 +264,8 @@
                         <span class="tag">Ordinal</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/aptos2019-blindness-detection" target="_blank">Competition</a>
-                        <a href="aptos/">Code</a>
+                        <a href="aptos/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/aptos">Code</a>
                     </div>
                 </div>
 
@@ -288,8 +297,8 @@
                         <span class="tag">Fairness</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification" target="_blank">Competition</a>
-                        <a href="jigsaw/">Code</a>
+                        <a href="jigsaw/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/jigsaw">Code</a>
                     </div>
                 </div>
 
@@ -306,8 +315,8 @@
                         <span class="tag">ResNeXt</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/imet-2019-fgvc6" target="_blank">Competition</a>
-                        <a href="imet/">Code</a>
+                        <a href="imet/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/imet">Code</a>
                     </div>
                 </div>
 
@@ -323,8 +332,8 @@
                         <span class="tag">CNN</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/rfcx-species-audio-detection" target="_blank">Competition</a>
-                        <a href="rfcx/">Code</a>
+                        <a href="rfcx/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/rfcx">Code</a>
                     </div>
                 </div>
 
@@ -340,8 +349,8 @@
                         <span class="tag">Extraction</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/tweet-sentiment-extraction" target="_blank">Competition</a>
-                        <a href="tweet/">Code</a>
+                        <a href="tweet/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/tweet">Code</a>
                     </div>
                 </div>
 
@@ -357,12 +366,92 @@
                         <span class="tag">Geoscience</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/tgs-salt-identification-challenge" target="_blank">Competition</a>
-                        <a href="salt/">Code</a>
+                        <a href="salt/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/salt">Code</a>
                     </div>
                 </div>
 
                 <!-- Other Projects -->
+                <div class="project-card">
+                    <div class="project-header">
+                        <h3>AmExpert Coupon Redemption Prediction</h3>
+                    </div>
+                    <p class="project-description">Coupon redemption prediction using customer transaction features and rank-blended LightGBM models.</p>
+                    <div class="project-tags">
+                        <span class="tag">Tabular</span>
+                        <span class="tag">LightGBM</span>
+                        <span class="tag">Ensemble</span>
+                    </div>
+                    <div class="project-links">
+                        <a href="amexpert/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/amexpert">Code</a>
+                    </div>
+                </div>
+
+                <div class="project-card">
+                    <div class="project-header">
+                        <h3>Cassava Leaf Disease Classification</h3>
+                    </div>
+                    <p class="project-description">Leaf disease classification using EfficientNet-B4, stochastic weight averaging, and model blending.</p>
+                    <div class="project-tags">
+                        <span class="tag">Computer Vision</span>
+                        <span class="tag">EfficientNet</span>
+                        <span class="tag">SWA</span>
+                    </div>
+                    <div class="project-links">
+                        <a href="leaf/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/leaf">Code</a>
+                    </div>
+                </div>
+
+                <div class="project-card">
+                    <div class="project-header">
+                        <h3>Spooky Author Identification</h3>
+                    </div>
+                    <p class="project-description">Author identification combining text features, Naive Bayes, gradient boosting, and recurrent neural networks.</p>
+                    <div class="project-tags">
+                        <span class="tag">NLP</span>
+                        <span class="tag">XGBoost</span>
+                        <span class="tag">LSTM</span>
+                    </div>
+                    <div class="project-links">
+                        <a href="spooky/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/spooky">Code</a>
+                    </div>
+                </div>
+
+                <div class="project-card">
+                    <div class="project-header">
+                        <h3>Statoil Iceberg Classifier Challenge</h3>
+                    </div>
+                    <p class="project-description">Iceberg and ship classification from radar images using CNNs, transfer learning, and stacking.</p>
+                    <div class="project-tags">
+                        <span class="tag">Computer Vision</span>
+                        <span class="tag">CNN</span>
+                        <span class="tag">Ensemble</span>
+                    </div>
+                    <div class="project-links">
+                        <a href="statoil/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/statoil">Code</a>
+                    </div>
+                </div>
+
+                <div class="project-card">
+                    <div class="project-header">
+                        <h3>Whale Identification Challenge</h3>
+                    </div>
+                    <p class="project-description">Individual whale identification using ResNet50 embeddings, center loss, and Siamese similarity learning.</p>
+                    <div class="project-tags">
+                        <span class="tag">Computer Vision</span>
+                        <span class="tag">ResNet50</span>
+                        <span class="tag">Metric Learning</span>
+                    </div>
+                    <div class="project-links">
+                        <a href="whale/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/whale">Code</a>
+                    </div>
+                </div>
+
                 <div class="project-card">
                     <div class="project-header">
                         <h3>Quick, Draw! Doodle Recognition</h3>
@@ -375,8 +464,8 @@
                         <span class="tag">ResNet</span>
                     </div>
                     <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/quickdraw-doodle-recognition" target="_blank">Competition</a>
-                        <a href="doodle/">Code</a>
+                        <a href="doodle/">Write-up</a>
+                        <a href="https://github.com/brightertiger/kaggle/tree/master/doodle">Code</a>
                     </div>
                 </div>
             </div>

@@ -8,8 +8,7 @@ and evaluation using BERT and GPT-2 models.
 """
 
 __version__ = "1.0.0"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"
+__author__ = "Ujjwal Singh Rao"
 
 from .config import Config
 from .data_utils import DataProcessor, DataLoader

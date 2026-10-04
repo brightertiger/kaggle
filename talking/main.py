@@ -8,20 +8,14 @@ This script provides a command-line interface for running the complete machine l
 pipeline for detecting fraudulent ad clicks in mobile advertising.
 
 Usage:
-    python main.py --mode full --data-dir ../data
-    python main.py --mode preprocess --data-dir ../data
-    python main.py --mode train --data-dir ../data
-    python main.py --mode predict --data-dir ../data
+    python main.py --mode full --data-dir data
+    python main.py --mode preprocess --data-dir data
+    python main.py --mode train --data-dir data
+    python main.py --mode predict --data-dir data
 """
 
 import argparse
 import sys
-import os
-from pathlib import Path
-import warnings
-warnings.filterwarnings('ignore')
-
-sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import Config
 from src.pipeline import TalkingDataPipeline
@@ -35,19 +29,19 @@ def main():
         epilog="""
 Examples:
   # Run complete pipeline
-  python main.py --mode full --data-dir ../data
+  python main.py --mode full --data-dir data
   
   # Preprocess data only
-  python main.py --mode preprocess --data-dir ../data
+  python main.py --mode preprocess --data-dir data
   
   # Train models only
-  python main.py --mode train --data-dir ../data
+  python main.py --mode train --data-dir data
   
   # Generate predictions only
-  python main.py --mode predict --data-dir ../data
+  python main.py --mode predict --data-dir data
   
   # Evaluate models
-  python main.py --mode evaluate --data-dir ../data
+  python main.py --mode evaluate --data-dir data
         """
     )
     
@@ -57,8 +51,15 @@ Examples:
                        help='Pipeline execution mode (default: full)')
     
     parser.add_argument('--data-dir', type=str, 
-                       default='../data',
-                       help='Path to data directory (default: ../data)')
+                       default='data',
+                       help='Output/data directory (default: data; inputs in download/)')
+
+    parser.add_argument('--raw-data-dir', default=None,
+                        help='Directory containing input CSVs; defaults to DATA_DIR/download')
+    parser.add_argument('--num-boost-round', type=int, default=1000,
+                        help='Maximum boosting rounds per model')
+    parser.add_argument('--num-threads', type=int, default=None,
+                        help='LightGBM CPU threads (default: available CPUs)')
     
     parser.add_argument('--skip-preprocess', action='store_true',
                        help='Skip data preprocessing step (for full mode)')
@@ -79,8 +80,13 @@ Examples:
     
     try:
         # Create configuration
-        config = Config()
-        config.DATA_DIR = Path(args.data_dir)
+        config = Config(args.data_dir, raw_data_dir=args.raw_data_dir)
+        if args.num_boost_round < 1 or (args.num_threads is not None and args.num_threads < 1):
+            parser.error('Boosting rounds and thread count must be positive')
+        config.NUM_BOOST_ROUND = args.num_boost_round
+        if args.num_threads is not None:
+            config.NUM_THREADS = args.num_threads
+        config._create_directories()
         
         # Create pipeline
         pipeline = TalkingDataPipeline(config)
@@ -95,13 +101,12 @@ Examples:
             print("\nTraining models...")
             # Check if feature-engineered data exists
             if not (config.MODELS_DIR / 'train_data.feather').exists():
-                print("Feature-engineered data not found. Running preprocessing first...")
+                if not (config.PROCESSED_DATA_DIR / 'train_data.feather').exists():
+                    pipeline.preprocess_data()
                 pipeline.create_feature_engineered_data()
             
             # Load data and train
-            train_data = pd.read_feather(config.MODELS_DIR / 'train_data.feather')
-            valid_data = pd.read_feather(config.MODELS_DIR / 'valid_data.feather')
-            pipeline.trainer.train_multiple_models(train_data, valid_data, ['model_1', 'model_2'])
+            pipeline.train_models()
             print("Model training completed successfully!")
             
         elif args.mode == 'predict':

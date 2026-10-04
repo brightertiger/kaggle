@@ -7,11 +7,6 @@ This script demonstrates how to use the refactored AmExpert pipeline
 for coupon redemption prediction.
 """
 
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from src.pipeline import AmExpertPipeline
 
 
@@ -54,7 +49,7 @@ def main():
     
     print("\n" + "=" * 60)
     print("Pipeline completed successfully!")
-    print("Final predictions saved to: score.csv")
+    print("Final predictions saved to: data/score/submission.csv")
 
 
 if __name__ == '__main__':

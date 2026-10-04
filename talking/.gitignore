@@ -1,0 +1,12 @@
+sample_data/
+dry_run_output/
+data/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

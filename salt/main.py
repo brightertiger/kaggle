@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
 
-import sys
-import os
-import torch
-import pandas as pd
 import argparse
 from pathlib import Path
-import warnings
-warnings.filterwarnings('ignore')
-
-sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import Config
 from src.pipeline import SaltSegmentationPipeline
 
 def main():
-    """Main entry point for Salt Identification from Aerial Images"""
+    """Main entry point for TGS Salt Identification Challenge"""
     
     parser = argparse.ArgumentParser(
-        description='Salt Identification from Aerial Images - Deep Learning Pipeline'
+        description='TGS Salt Identification Challenge - Deep Learning Pipeline'
     )
     parser.add_argument('--mode', type=str, 
                        choices=['preprocess', 'train', 'predict', 'evaluate', 'submit', 'full'],
@@ -42,7 +34,7 @@ def main():
                        help='Learning rate')
     parser.add_argument('--fold', type=int, 
                        default=None,
-                       help='Specific fold to train (1-5), if not specified all folds are trained')
+                       help='Specific fold to train (1..--folds); otherwise train all folds')
     parser.add_argument('--resume', action='store_true',
                        help='Resume training from checkpoint')
     parser.add_argument('--use-tta', action='store_true',
@@ -50,12 +42,23 @@ def main():
     parser.add_argument('--skip-preprocess', action='store_true',
                        help='Skip data preprocessing step')
     parser.add_argument('--data-dir', type=str, 
-                       default='../data',
+                       default=str(Path(__file__).resolve().parent / 'data'),
                        help='Path to data directory')
     
+    parser.add_argument('--output-dir', type=Path, default=Path(__file__).resolve().parent / 'output')
+    parser.add_argument('--folds', type=int, default=5)
+    parser.add_argument('--image-size', type=int, default=101)
+    parser.add_argument('--padded-size', type=int, default=128)
+    parser.add_argument('--no-pretrained', action='store_true', help='Random encoder initialization')
+    parser.add_argument('--tiny-model', action='store_true', help='Small random U-Net encoder for smoke tests')
+    parser.add_argument('--threshold', type=float, default=None, help='Logit cutoff for submit mode')
     args = parser.parse_args()
+    if args.fold is not None and args.mode != 'train':
+        parser.error('--fold is only supported with --mode train')
+    if args.fold is not None and not 1 <= args.fold <= args.folds:
+        parser.error('--fold must lie within 1..--folds')
     
-    print("Salt Identification from Aerial Images")
+    print("TGS Salt Identification Challenge")
     print("=" * 50)
     print(f"Mode: {args.mode}")
     print(f"Model: {args.model}")
@@ -68,16 +71,22 @@ def main():
     print("=" * 50)
     
     # Create configuration
-    config = Config()
-    config.DATA_DIR = Path(args.data_dir)
+    config = Config(data_dir=args.data_dir, output_dir=args.output_dir)
     config.NUM_EPOCHS = args.epochs
     config.BATCH_SIZE_TRAIN = args.batch_size
+    config.BATCH_SIZE_VALID = args.batch_size
+    config.NUM_FOLDS = args.folds
+    config.IMAGE_SIZE = args.image_size
+    config.PADDED_SIZE = args.padded_size
+    config.PRETRAINED = not args.no_pretrained
+    config.TINY_MODEL = args.tiny_model
     config.LEARNING_RATE = args.lr
     config.MODEL_NAME = args.model
     
     if args.device != 'auto':
         config.DEVICE = args.device
     
+    config.validate()
     # Create pipeline
     pipeline = SaltSegmentationPipeline(config)
     
@@ -100,7 +109,7 @@ def main():
             print(f"\nEvaluation completed. Best threshold: {results['best_threshold']:.3f}")
             
         elif args.mode == 'submit':
-            submission_df = pipeline.create_submission(args.model, args.use_tta)
+            submission_df = pipeline.create_submission(args.model, args.use_tta, args.threshold)
             print(f"\nSubmission created with {len(submission_df)} predictions")
             
         elif args.mode == 'full':

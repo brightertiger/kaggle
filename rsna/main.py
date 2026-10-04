@@ -2,12 +2,7 @@
 
 import sys
 import os
-import torch
-import pandas as pd
 import argparse
-from pathlib import Path
-import warnings
-warnings.filterwarnings('ignore')
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -25,7 +20,7 @@ def main():
                        default='full',
                        help='Pipeline execution mode')
     parser.add_argument('--model', type=str, 
-                       choices=['resnet50', 'resnet101', 'inception', 'resnext50', 'resnext101', 'efficientnet'],
+                       choices=['resnet18', 'resnet50', 'resnet101', 'inception', 'resnext50', 'resnext101', 'efficientnet'],
                        default='resnext101',
                        help='Model architecture to use')
     parser.add_argument('--device', type=str, 
@@ -43,10 +38,23 @@ def main():
     parser.add_argument('--skip-preprocess', action='store_true',
                        help='Skip data preprocessing step')
     parser.add_argument('--data-dir', type=str, 
-                       default='../data',
+                       default='data',
                        help='Path to data directory')
     
+    parser.add_argument('--output-dir', default='output')
+    parser.add_argument('--image-size', type=int, default=512)
+    parser.add_argument('--folds', type=int, default=5)
+    parser.add_argument('--workers', type=int, default=6)
+    parser.add_argument('--no-pretrained', action='store_true', help='Random initialization; no weight download')
+    parser.add_argument('--no-amp', action='store_true')
+    parser.add_argument('--tta', action='store_true', help='Average original and horizontally flipped predictions')
+    parser.add_argument('--train-labels', default='stage_1_train.csv')
+    parser.add_argument('--sample-submission', default='stage_1_sample_submission.csv')
+    parser.add_argument('--train-images', default='train')
+    parser.add_argument('--test-images', default='test')
     args = parser.parse_args()
+    if min(args.epochs, args.batch_size, args.image_size) < 1 or args.folds < 2 or args.workers < 0:
+        parser.error('epochs, batch-size and image-size must be positive; folds >= 2; workers >= 0')
     
     print("RSNA Intracranial Hemorrhage Detection")
     print("=" * 50)
@@ -58,10 +66,21 @@ def main():
     print(f"Learning Rate: {args.lr}")
     print("=" * 50)
     
-    config = Config()
-    config.DATA_DIR = Path(args.data_dir)
+    config = Config(args.data_dir, args.output_dir)
+    config.IMAGE_SIZE = args.image_size
+    config.NUM_FOLDS = args.folds
+    config.NUM_WORKERS = args.workers
+    config.PRETRAINED = not args.no_pretrained
+    config.USE_AMP = not args.no_amp
+    config.USE_TTA = args.tta
+    config.TRAIN_LABELS = args.train_labels
+    config.SAMPLE_SUBMISSION = args.sample_submission
+    config.TRAIN_IMAGES = args.train_images
+    config.TEST_IMAGES = args.test_images
     config.NUM_EPOCHS = args.epochs
     config.BATCH_SIZE_TRAIN = args.batch_size
+    config.BATCH_SIZE_VALID = args.batch_size
+    config.BATCH_SIZE_INFERENCE = args.batch_size
     config.LEARNING_RATE = args.lr
     
     if args.device != 'auto':

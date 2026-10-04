@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.matplotlib/
+sample_data/
+dry_run_output/
+data/
+models/
+submissions/
+dry_run.log

@@ -1,255 +1,241 @@
-# AmExpert Coupon Redemption Prediction
+# [AmExpert 2019 — Coupon Redemption Prediction](https://www.analyticsvidhya.com/datahack/contest/amexpert-2019-machine-learning-hackathon/)
 
-A comprehensive machine learning solution for predicting coupon redemption behavior in the AmExpert competition. This project demonstrates advanced feature engineering, ensemble modeling, and systematic approach to solving a real-world business problem.
+Final rank / teams / medal: not documented in the portfolio's root README or this solution's surviving records.
 
-## 🎯 Problem Statement
+I built this solution around relational features and a small LightGBM ensemble.
+The central question was whether a customer's purchase history matched the items
+covered by a coupon, alongside their past response to discounts.
 
-The challenge was to predict whether customers would redeem coupons based on their historical behavior, demographic information, and coupon characteristics. This is a binary classification problem with significant business implications for targeted marketing campaigns.
+This event was hosted by Analytics Vidhya and American Express, rather than Kaggle;
+the title links to the official competition page.
+This folder preserves the competition approach in an executable portfolio form.
+It does not claim a reproduced leaderboard score.
 
-## 📊 Dataset Overview
+## Problem
 
-The dataset consists of several key components:
+I predicted `redemption_status`: whether a customer would redeem a particular
+coupon in a marketing campaign. Each prediction belongs to an `id` identifying
+a customer–coupon–campaign offer.
 
-- **Customer Demographics**: Age range, marital status, family size, number of children
-- **Transaction History**: Purchase patterns, discount usage, brand preferences
-- **Coupon Information**: Item mappings, discount amounts, campaign details
-- **Campaign Data**: Start/end dates, campaign durations
-- **Item Data**: Brand types, categories, pricing information
+The objective is binary classification, evaluated with ROC AUC.
+I use continuous scores because the metric measures ordering across classes;
+there is no threshold selection step in this implementation.
 
-### Data Statistics
-- **Training Set**: 78,369 samples
-- **Validation Set**: 22,606 samples (Campaign ID 13)
-- **Test Set**: 50,226 samples
-- **Redemption Rate**: ~2.5% (highly imbalanced)
+The difficult part is assembling the evidence. A coupon can cover many items,
+customers have very different purchase histories, and redemption is uncommon.
+Campaigns also introduce a time boundary that a random row split would ignore.
 
-## 🏗️ Solution Architecture
+## Data
 
-### 1. Data Preprocessing
-- **Date Format Standardization**: Convert DD/MM/YY to YYYY-MM-DD format
-- **Categorical Encoding**: Label encoding for categorical variables
-- **Train/Validation Split**: Time-based split using Campaign ID 13 as validation
+The inputs are relational CSV tables, with no images, text encoders, or pretrained weights.
+I join them through customer, campaign, coupon, and item identifiers.
 
-### 2. Feature Engineering Pipeline
+| File | Schema / role |
+| --- | --- |
+| `train.csv` | `id`, `campaign_id`, `coupon_id`, `customer_id`, binary `redemption_status` |
+| `test.csv` | The same offer identifiers, without the target |
+| `campaign_data.csv` | `campaign_id`, `campaign_type`, `start_date`, `end_date` |
+| `customer_demographics.csv` | `customer_id`, `age_range`, `marital_status`, `rented`, `family_size`, `no_of_children`, `income_bracket` |
+| `customer_transaction_data.csv` | `date`, `customer_id`, `item_id`, `quantity`, `selling_price`, `other_discount`, `coupon_discount` |
+| `item_data.csv` | `item_id`, `brand`, `brand_type`, `category` |
+| `coupon_item_mapping.csv` | `coupon_id`, `item_id`; multiple items can belong to a coupon |
+| `sample_submission.csv` | Optional reference layout: `id`, `redemption_status` |
 
-#### Customer Features
-- **Transaction Patterns**: Number of transactions, unique items purchased
-- **Spending Behavior**: Average price, total spending, discount usage
-- **Brand/Category Diversity**: Unique brands, categories, brand types
-- **Discount Preferences**: Other discount vs coupon discount patterns
+Campaign dates use day/month/year strings; transaction dates use ISO dates.
+Discount amounts retain their supplied signs, including negative reductions.
+Demographic fields contain missing values and categorical ranges such as `5+`.
+Some customers lack demographics or usable purchase history.
 
-#### Coupon Features
-- **Item Diversity**: Number of unique items, brands, categories per coupon
-- **Brand Type Distribution**: Distribution across different brand types
-- **Category Coverage**: Breadth of categories covered
+I retain these sparse offers through left joins instead of silently dropping them.
+Missing profile values use a sentinel; absent transaction sums and similarities
+use zero. Remaining missing merged features use a sentinel as well.
 
-#### Campaign Features
-- **Duration Analysis**: Campaign length and timing
-- **Seasonal Patterns**: Time-based campaign characteristics
+## Approach
 
-#### Transaction Features
-- **Brand Preferences**: Historical brand interaction patterns
-- **Category Preferences**: Category-wise purchase behavior
-- **Item-Level Patterns**: Individual item purchase history
-
-#### Advanced Features
-- **Similarity Metrics**: Jaccard similarity between customer preferences and coupon items
-- **Time-Based Features**: Historical transaction patterns before campaign start
-- **Spending Profiles**: Customer-coupon interaction history
-
-### 3. Modeling Strategy
-
-#### Model Architecture
-Three LightGBM models with different configurations:
-
-1. **Model V1**: Basic LightGBM without categorical features
-   - 24 leaves, depth 4
-   - Focus on numerical features only
-
-2. **Model V2**: LightGBM with customer_id as categorical feature
-   - 48 leaves, depth 6
-   - Leverages customer-specific patterns
-
-3. **Model V3**: Deep LightGBM with enhanced capacity
-   - 64 leaves, depth 8
-   - Maximum model complexity
-
-#### Hyperparameters
-```python
-{
-    'boosting_type': 'gbdt',
-    'objective': 'binary',
-    'learning_rate': 0.01,
-    'subsample': 0.5,
-    'colsample_bytree': 0.5,
-    'colsample_bylevel': 0.5,
-    'metric': 'auc',
-    'num_boost_round': 2000,
-    'early_stopping_rounds': 200
-}
+```mermaid
+flowchart TD
+    A[Offer tables and campaign dates] --> B[Combined driver keyed by id]
+    C[Demographics and transaction history] --> D[Customer aggregates]
+    E[Coupon mappings and item metadata] --> F[Coupon breadth and spending]
+    C --> G[Preference overlap and temporal interactions]
+    E --> G
+    B --> H[Merge feature tables by id]
+    D --> H
+    F --> H
+    G --> H
+    H --> I[Hold out campaign 13]
+    I --> J[LightGBM V1 / V2 / V3]
+    J --> K[Average percentile ranks]
+    K --> L[Submission CSV]
 ```
 
-### 4. Ensemble Strategy
+### Validation and preprocessing
 
-**Rank Blending**: Combines predictions using rank averaging
-- Converts predictions to ranks to handle scale differences
-- Averages ranks across models
-- Converts back to probability space
+I hold out campaign `13` and train on the remaining labeled campaigns.
+This tests transfer across campaigns while allowing customers to appear in both
+partitions. It is a campaign holdout, not a guarantee of chronological isolation.
+The CLI exposes the campaign ID so the split is explicit and repeatable.
+Both partitions must contain both target classes for ROC AUC to be meaningful.
 
-This approach is robust to:
-- Different prediction scales
-- Model-specific biases
-- Outlier predictions
+I standardize campaign dates and label-encode demographic categories.
+The shared metadata tables are encoded once during feature construction, so
+training and test offers receive consistent codes.
+The existing campaign-duration fallback replaces a reversed end date with a
+start date plus `90` days.
 
-## 🚀 Key Innovations
+### Customer behavior and coupon coverage
 
-### 1. Comprehensive Feature Engineering
-- **Multi-level Aggregation**: Customer, coupon, and campaign level features
-- **Temporal Features**: Time-based transaction patterns
-- **Similarity Metrics**: Jaccard similarity for preference matching
-- **Interaction Features**: Customer-coupon specific patterns
+I aggregate transaction counts, unique items, spending, discount totals, and
+nonzero discount counts by customer, then join their demographic profile.
+Brand and category diversity describe how broad their purchasing behavior is.
+Additional transaction tables summarize quantity and spending at customer level.
 
-### 2. Advanced Similarity Computation
-```python
-def jaccard_similarity(set1, set2):
-    intersection = len(set1 & set2)
-    union = len(set1 | set2)
-    return intersection / union if union > 0 else 0
-```
+For each coupon, I count eligible items, brands, categories, and brand types.
+Joining transactions to eligible items gives coupon-level quantity, price, and
+coupon-discount sums, means, and standard deviations.
+These features distinguish broad offers from narrow offers and describe their
+historical purchasing context.
 
-### 3. Time-Aware Feature Engineering
-- Historical transaction patterns before campaign start
-- Customer-coupon interaction history
-- Temporal discount usage patterns
+### Preference matching and time features
 
-### 4. Robust Ensemble Method
-- Rank-based blending for scale invariance
-- Multiple model architectures for diversity
-- Early stopping for generalization
+I compute Jaccard overlap between customer purchases and coupon coverage at
+item, brand, and category level. The customer side uses purchases with zero
+coupon discount, retaining the original focus on purchases without coupon use.
+An empty history produces zero overlap.
 
-## 📈 Results & Performance
+The temporal feature block filters transactions strictly before each campaign's
+start. It summarizes quantity, spending, and coupon discounts for customers,
+coupons, and customer–coupon pairs.
+Customer totals come from the original transactions so that an item eligible for
+multiple coupons does not multiply a customer's spending.
 
-### Model Performance
-- **Model V1**: Strong baseline performance
-- **Model V2**: Improved with categorical features
-- **Model V3**: Best individual model performance
+The other aggregate and similarity blocks use the entire supplied transaction
+file. I preserve that behavior here, but it means this is not a fully time-isolated
+backtest. Applying campaign cutoffs to every history-derived feature is a clear
+next experiment before using this pipeline for prospective predictions.
 
-### Ensemble Benefits
-- **Correlation Analysis**: Models show moderate correlation (~0.7-0.8)
-- **Diversity**: Different architectures capture different patterns
-- **Robustness**: Ensemble reduces overfitting risk
+### Models and training
 
-### Business Impact
-- **Targeted Marketing**: Identify high-probability redemption customers
-- **Cost Optimization**: Focus resources on likely converters
-- **Campaign Effectiveness**: Improve coupon design based on insights
+I use the same engineered features with three LightGBM configurations:
 
-## 🛠️ Technical Implementation
+| Model | Leaves | Maximum depth | Customer identity |
+| --- | --- | --- | --- |
+| V1 | 24 | 4 | Excluded |
+| V2 | 48 | 6 | `customer_id` treated as categorical |
+| V3 | 64 | 8 | `customer_id` treated as categorical |
 
-### Code Structure
-```
+The shared defaults use binary GBDT, learning rate `0.01`, row and feature
+subsampling of `0.5`, and ROC AUC monitoring.
+Training allows up to `2000` rounds with `200` rounds of early-stopping patience.
+I save each model and report validation AUC and gain-based feature importance.
+The dry run overrides training size and leaf constraints without changing these defaults.
+
+The pipeline exports a combined labeled feature table as `full.csv`, but trains
+with the campaign holdout retained. It does not perform an additional full-data refit.
+
+### Ensemble and submission
+
+I average each model's percentile ranks, matching predictions by `id` and retaining
+test row order. Average ranks reduce sensitivity to differing prediction scales.
+Percentile normalization preserves the ordering of the original rank blend and
+keeps submitted scores in the unit interval.
+These scores are not calibrated redemption probabilities.
+
+Weighted arithmetic and geometric blends remain available as library helpers.
+The default pipeline uses rank blending and writes `submission.csv` with exactly
+`id` and `redemption_status`.
+
+## What mattered most
+
+The surviving code captures these design choices; it contains no reliable
+ablation record, so I cannot assign a measured score gain to any one of them.
+
+- Customer–coupon overlap makes the relevance of an offer explicit.
+- Discount history separates general purchasing activity from coupon use.
+- Campaign holdout validation exposes a different failure mode from random rows.
+- Pre-campaign interactions add a temporal view alongside broad history aggregates.
+- Varying tree capacity and customer identity gives the rank blend distinct inputs.
+
+## Repository layout
+
+```text
 amexpert/
-├── src/
-│   ├── __init__.py
-│   ├── data_preprocessing.py    # Data cleaning and preparation
-│   ├── feature_engineering.py  # Feature creation pipeline
-│   ├── modeling.py             # Model training and evaluation
-│   ├── ensemble.py             # Prediction blending
-│   └── pipeline.py             # Main pipeline orchestration
-├── main.py                     # Entry point
-├── example_usage.py            # Usage example
-├── requirements.txt            # Dependencies
-└── README.md                   # Documentation
+├── README.md                  # Solution narrative, scope, and run instructions
+├── main.py                    # CLI for the complete pipeline or individual stages
+├── example_usage.py           # Python API example running each stage in sequence
+├── dry_run.py                 # Synthetic schemas, CPU training, and integrity checks
+├── requirements.txt           # Runtime dependencies
+├── .gitignore                 # Local data, generated outputs, and Python caches
+└── src/
+    ├── __init__.py            # Package marker
+    ├── data_preprocessing.py  # Dates, category encoding, and campaign split
+    ├── feature_engineering.py # Customer, coupon, overlap, and temporal features
+    ├── modeling.py            # LightGBM configurations, training, and predictions
+    ├── ensemble.py            # ID-aligned rank, weighted, and geometric blends
+    └── pipeline.py            # Data preparation and stage orchestration
 ```
 
-### Usage
+## How to run
+
+### Real competition data
+
+Use Python `3.11` and install the dependencies from this folder:
+
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run complete pipeline
-python main.py --step all
-
-# Run specific steps
-python main.py --step preprocess
-python main.py --step features
-python main.py --step merge
-python main.py --step train
-python main.py --step blend
-
-# Simple example
-python example_usage.py
+python -m pip install -r requirements.txt
 ```
 
-### Key Functions
-- `AmExpertPipeline`: Main pipeline class
-- `create_customer_features()`: Customer behavior features
-- `create_similarity_features()`: Preference matching
-- `train_lightgbm_model()`: Model training
-- `rank_blend_predictions()`: Ensemble blending
+Extract the competition files and arrange the CSVs directly under the input directory.
+Rename downloaded files with archive suffixes to the names below if necessary.
+No precomputed `driver.csv` or nested `data/data/` directory is required.
 
-## 🔍 Feature Importance Analysis
+```text
+data/
+├── train.csv
+├── test.csv
+├── campaign_data.csv
+├── customer_demographics.csv
+├── customer_transaction_data.csv
+├── item_data.csv
+└── coupon_item_mapping.csv
+```
 
-Top features typically include:
-1. **Customer Transaction Patterns**: Historical purchase behavior
-2. **Similarity Metrics**: Preference alignment with coupon items
-3. **Discount Usage**: Historical coupon vs other discount patterns
-4. **Brand/Category Preferences**: Alignment with coupon characteristics
-5. **Temporal Features**: Time-based transaction patterns
+```bash
+python main.py --data-dir data --feature-dir data/feature \
+  --model-dir data/model --score-dir data/score \
+  --validation-campaign-id 13 --num-boost-round 2000 \
+  --early-stopping-rounds 200 --num-threads 3 --step all
+```
 
-## 💡 Business Insights
+The result is `data/score/submission.csv`; individual model scores are alongside it.
+Feature CSVs and cleaned campaign dates go to `data/feature`, and model files and
+merged matrices go to `data/model`. Raw CSVs remain unchanged.
 
-### Customer Segmentation
-- **High Redemption Probability**: Customers with strong brand/category alignment
-- **Low Redemption Probability**: Customers with mismatched preferences
-- **Opportunity Customers**: Customers with potential but no historical coupon usage
+To resume a stage, use `--step preprocess`, `features`, `merge`, `train`, or `blend`.
+Run prerequisite stages first and reuse the same directory and split arguments.
+`python example_usage.py` demonstrates the same workflow with default paths.
 
-### Coupon Optimization
-- **Item Selection**: Focus on items matching customer preferences
-- **Brand Alignment**: Ensure brand consistency with customer history
-- **Category Coverage**: Balance breadth vs specificity
+### Synthetic dry run
 
-### Campaign Timing
-- **Seasonal Patterns**: Optimal timing for different customer segments
-- **Duration Optimization**: Campaign length vs redemption probability
-- **Frequency Analysis**: Optimal campaign frequency per customer
+```bash
+python dry_run.py
+```
 
-## 🎓 Learning Outcomes
+This creates `sample_data/`, runs every feature family and all three models on CPU,
+and writes `dry_run_output/score/submission.csv`.
+It needs no competition download, GPU, or pretrained assets and skips no stages.
+It checks row preservation, temporal sums, empty-history overlap, model reloads,
+submission bounds, and ensemble alignment when prediction rows are shuffled.
+Both generated directories are ignored locally. Rerunning replaces the sample files.
+Synthetic validation metrics demonstrate execution only, not leaderboard performance.
 
-This project demonstrates:
+## Lessons / what I'd do differently
 
-1. **End-to-End ML Pipeline**: From data preprocessing to model deployment
-2. **Advanced Feature Engineering**: Multi-level aggregation and similarity metrics
-3. **Ensemble Methods**: Robust blending strategies
-4. **Business Understanding**: Translating technical solutions to business value
-5. **Code Organization**: Modular, maintainable, and scalable code structure
-
-## 🔮 Future Enhancements
-
-### Model Improvements
-- **Deep Learning**: Neural networks for complex pattern recognition
-- **Time Series Models**: LSTM/GRU for temporal patterns
-- **Graph Neural Networks**: Customer-item relationship modeling
-
-### Feature Engineering
-- **External Data**: Weather, economic indicators, seasonal trends
-- **Advanced Similarity**: Cosine similarity, collaborative filtering
-- **Feature Selection**: Automated feature importance and selection
-
-### Business Applications
-- **Real-time Scoring**: Online prediction for dynamic campaigns
-- **A/B Testing**: Framework for campaign optimization
-- **Customer Lifetime Value**: Integration with CLV models
-
-## 📚 References
-
-- LightGBM Documentation: https://lightgbm.readthedocs.io/
-- Scikit-learn Documentation: https://scikit-learn.org/
-- Pandas Documentation: https://pandas.pydata.org/
-
-## 👨‍💻 Author
-
-This project was developed as part of a data science competition, demonstrating advanced machine learning techniques for business applications.
-
----
-
-*This README serves as both technical documentation and a portfolio piece showcasing comprehensive data science capabilities.*
+- I would enforce campaign cutoffs consistently across all transaction features,
+  then compare that backtest with the preserved competition feature strategy.
+- I would evaluate several campaign holdouts before trusting customer identity
+  features, particularly for customers absent from the training campaigns.
+- I would retain ablations and experiment metadata alongside saved models so
+  model diversity and individual feature gains could be demonstrated directly.
+- I would cache shared transaction joins for larger runs; the current modular
+  implementation rereads tables and can expand substantially at coupon-item joins.

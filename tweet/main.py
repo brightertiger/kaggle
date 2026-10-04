@@ -1,61 +1,40 @@
 #!/usr/bin/env python3
-
+"""Train, evaluate processed folds, or write a competition submission."""
 import argparse
-import os
-import sys
 from pathlib import Path
-
-sys.path.insert(0, os.path.dirname(__file__))
-
 from src.config import get_config
 from src.pipeline import TweetSentimentPipeline
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Tweet Sentiment Analysis Pipeline')
-    parser.add_argument('--mode', type=str, choices=['train', 'evaluate', 'predict'], 
-                       default='train', help='Pipeline mode')
-    parser.add_argument('--data-path', type=str, default='data/raw/train.csv',
-                       help='Path to training data')
-    parser.add_argument('--test-path', type=str, default='data/raw/test.csv',
-                       help='Path to test data')
-    parser.add_argument('--output-path', type=str, default='submissions/',
-                       help='Path to save predictions')
-    parser.add_argument('--config', type=str, default=None,
-                       help='Path to custom config file')
-    
+    parser = argparse.ArgumentParser(description='Tweet Sentiment Extraction Pipeline')
+    parser.add_argument('--mode', choices=['train', 'evaluate', 'predict'], default='train')
+    parser.add_argument('--data-path', help='Raw train CSV for train; processed fold CSV for evaluate')
+    parser.add_argument('--test-path', help='Test CSV with textID, text, sentiment')
+    parser.add_argument('--output-path', default='submissions/', help='Submission output directory')
+    parser.add_argument('--config', help='JSON file with data/model/training overrides')
+    parser.add_argument('--device', help='Override training.device, e.g. cpu or cuda:0')
     args = parser.parse_args()
-    
-    config = get_config()
+    config = get_config(args.config)
+    if args.device:
+        config.training.device = args.device
+    if args.data_path:
+        config.data.train_path = args.data_path
+    if args.test_path:
+        config.data.test_path = args.test_path
     pipeline = TweetSentimentPipeline(config)
-    
     if args.mode == 'train':
-        print("Training mode selected")
-        results = pipeline.run_full_pipeline(args.data_path)
-        
-        print("\nTraining completed!")
-        print(f"Average Jaccard Score: {results['average_score']:.4f}")
-        
+        pipeline.run_full_pipeline(config.data.train_path)
     elif args.mode == 'evaluate':
-        print("Evaluation mode selected")
-        results = pipeline.evaluate_all_folds(args.data_path)
-        
-        avg_score = sum(results.values()) / len(results)
-        print(f"\nAverage Jaccard Score: {avg_score:.4f}")
-        
-    elif args.mode == 'predict':
-        print("Prediction mode selected")
-        
-        if not os.path.exists(args.test_path):
-            print(f"Test file not found: {args.test_path}")
-            return
-        
-        os.makedirs(args.output_path, exist_ok=True)
-        
-        submission = pipeline.predict_test_set(args.test_path)
-        output_file = os.path.join(args.output_path, 'submission.csv')
-        submission.to_csv(output_file, index=False)
-        
-        print(f"Predictions saved to: {output_file}")
+        results = pipeline.evaluate_all_folds(config.data.train_path)
+        print(f"Average Jaccard Score: {sum(results.values()) / len(results):.4f}")
+    else:
+        submission = pipeline.predict_test_set(config.data.test_path)
+        output = Path(args.output_path)
+        output.mkdir(parents=True, exist_ok=True)
+        submission.to_csv(output / 'submission.csv', index=False)
+        print(f"Predictions saved to: {output / 'submission.csv'}")
+
 
 if __name__ == '__main__':
     main()

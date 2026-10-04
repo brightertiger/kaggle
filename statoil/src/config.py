@@ -1,11 +1,21 @@
-import os
+from copy import deepcopy
 
 class Config:
+    def __init__(self):
+        # Per-run overrides must not mutate other configurations.
+        self.MODEL_CONFIGS = deepcopy(type(self).MODEL_CONFIGS)
+        self.IMAGE_TRANSFORMS = deepcopy(type(self).IMAGE_TRANSFORMS)
+        self.XGBOOST_PARAMS = deepcopy(type(self).XGBOOST_PARAMS)
+
+    CNN_WIDTH = 1.0
+    VGG_WEIGHTS = 'imagenet'
+    VGG_WIDTH = 1.0  # Reduced random-init VGG topology for the smoke test only.
+    FEATURE_WORKERS = 2
+    XGB_ROUNDS = 3000
+    XGB_EARLY_STOPPING = 200
     RANDOM_STATE = 2017
     IMAGE_SIZE = 75
     BATCH_SIZE = 32
-    EPOCHS = 100
-    PATIENCE = 20
     LEARNING_RATE = 1e-4
     
     DATA_DIR = 'data'

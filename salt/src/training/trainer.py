@@ -2,19 +2,21 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from torch.utils.data import DataLoader
 
 from ..core.config import Config
 from ..models.models import create_model
 from ..models.loss import create_loss_function, create_metric_function
+from ..data.data_utils import crop_padding, restore_logits
 
 class ModelTrainer:
     """Model training class for Salt Identification"""
     
     def __init__(self, fold_idx: int, config: Config):
+        config.validate()
         self.fold_idx = fold_idx
+        self.best_metric = float("-inf")
         self.config = config
         self.device = torch.device(config.DEVICE)
         
@@ -27,9 +29,10 @@ class ModelTrainer:
         # Model paths
         self.model_path = config.MODEL_DIR / f"model_{fold_idx}.pth"
         
-    def create_model_and_optimizer(self, model_name: str) -> Tuple[nn.Module, optim.Optimizer]:
+    def create_model_and_optimizer(self, model_name: str, resume: bool = False) -> Tuple[nn.Module, optim.Optimizer]:
         """Create model and optimizer for training"""
-        model = create_model(model_name, self.config)
+        model = create_model(model_name, self.config,
+                             pretrained=False if resume and self.model_path.exists() else None)
         model = model.to(self.device)
         
         optimizer = optim.Adam(
@@ -49,6 +52,7 @@ class ModelTrainer:
             'metric': metric,
             'config': self.config.to_dict()
         }
+        self.model_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(state, self.model_path)
         print(f"Model saved at epoch {epoch} with metric {metric:.4f}")
     
@@ -58,7 +62,10 @@ class ModelTrainer:
             print("No checkpoint found, starting from scratch")
             return 0
         
-        checkpoint = torch.load(self.model_path, map_location=self.device)
+        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
+        for key in ('MODEL_NAME', 'TINY_MODEL', 'IMAGE_SIZE', 'PADDED_SIZE', 'NUM_FOLDS', 'RANDOM_SEED'):
+            if checkpoint['config'][key] != getattr(self.config, key):
+                raise ValueError(f'Checkpoint configuration mismatch: {key}')
         model.load_state_dict(checkpoint['state_dict'])
         
         if optimizer is not None and 'optimizer' in checkpoint:
@@ -68,7 +75,8 @@ class ModelTrainer:
         metric = checkpoint.get('metric', 0.0)
         print(f"Model loaded from epoch {epoch} with metric {metric:.4f}")
         
-        return epoch
+        self.best_metric = metric
+        return epoch + 1
     
     def adjust_learning_rate(self, optimizer: optim.Optimizer, factor: float = 0.5):
         """Adjust learning rate"""
@@ -83,7 +91,7 @@ class ModelTrainer:
         model.train()
         total_loss = 0.0
         total_metric = 0.0
-        num_batches = 0
+        num_images = 0
         
         for batch_idx, sample in enumerate(train_loader):
             images = sample['image'].to(self.device)
@@ -92,7 +100,7 @@ class ModelTrainer:
             # Forward pass
             optimizer.zero_grad()
             predictions = model(images)
-            loss = criterion(predictions, masks)
+            loss = criterion(crop_padding(predictions, self.config), crop_padding(masks, self.config))
             
             # Backward pass
             loss.backward()
@@ -100,13 +108,13 @@ class ModelTrainer:
             
             # Calculate metrics
             with torch.no_grad():
-                metric = metric_fn(predictions, masks)
-                total_loss += loss.item()
-                total_metric += metric
-                num_batches += 1
+                metric = metric_fn(restore_logits(predictions, self.config), sample['original_mask'].to(self.device))
+                total_loss += loss.item() * len(images)
+                total_metric += metric * len(images)
+                num_images += len(images)
         
-        avg_loss = total_loss / num_batches
-        avg_metric = total_metric / num_batches
+        avg_loss = total_loss / num_images
+        avg_metric = total_metric / num_images
         
         return avg_loss, avg_metric
     
@@ -116,7 +124,7 @@ class ModelTrainer:
         model.eval()
         total_loss = 0.0
         total_metric = 0.0
-        num_batches = 0
+        num_images = 0
         
         with torch.no_grad():
             for batch_idx, sample in enumerate(valid_loader):
@@ -125,28 +133,33 @@ class ModelTrainer:
                 
                 # Forward pass
                 predictions = model(images)
-                loss = criterion(predictions, masks)
+                loss = criterion(crop_padding(predictions, self.config), crop_padding(masks, self.config))
                 
                 # Calculate metrics
-                metric = metric_fn(predictions, masks)
-                total_loss += loss.item()
-                total_metric += metric
-                num_batches += 1
+                metric = metric_fn(restore_logits(predictions, self.config), sample['original_mask'].to(self.device))
+                total_loss += loss.item() * len(images)
+                total_metric += metric * len(images)
+                num_images += len(images)
         
-        avg_loss = total_loss / num_batches
-        avg_metric = total_metric / num_batches
+        avg_loss = total_loss / num_images
+        avg_metric = total_metric / num_images
         
         return avg_loss, avg_metric
     
     def train(self, model_name: str, train_loader: DataLoader, valid_loader: DataLoader,
-              resume: bool = False) -> Dict[str, List[float]]:
+              resume: bool = False) -> Dict[str, List[float] | float]:
         """Main training loop"""
         print(f"Starting training for fold {self.fold_idx}")
         print(f"Model: {model_name}")
         print(f"Device: {self.device}")
         
+        self.config.MODEL_NAME = model_name
+        self.config._create_directories()
+        self.model_path = self.config.MODEL_DIR / f"model_{self.fold_idx}.pth"
+        torch.manual_seed(self.config.RANDOM_SEED + self.fold_idx)
+        np.random.seed(self.config.RANDOM_SEED + self.fold_idx)
         # Create model and optimizer
-        model, optimizer = self.create_model_and_optimizer(model_name)
+        model, optimizer = self.create_model_and_optimizer(model_name, resume=resume)
         
         # Create loss and metric functions
         criterion = create_loss_function(self.config.LOSS_TYPE, {
@@ -155,7 +168,8 @@ class ModelTrainer:
         })
         metric_fn = create_metric_function(self.config.METRIC_TYPE, {
             'cutoff': self.config.IOU_CUTOFF,
-            'squash': self.config.IOU_SQUASH
+            'squash': self.config.IOU_SQUASH,
+            'min_salt_pixels': self.config.MIN_SALT_PIXELS
         })
         
         # Load checkpoint if resuming
@@ -164,7 +178,7 @@ class ModelTrainer:
             start_epoch = self.load_checkpoint(model, optimizer)
         
         # Training loop
-        best_metric = 0.78  # Baseline metric
+        best_metric = self.best_metric
         lr_patience_counter = 0
         early_stop_counter = 0
         

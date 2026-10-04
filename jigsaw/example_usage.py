@@ -7,12 +7,6 @@ This script demonstrates various ways to use the Jigsaw pipeline for
 toxic comment classification with BERT and GPT models.
 """
 
-import sys
-import os
-from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
 from src.config import Config
 from src.pipeline import JigsawPipeline
 from src.data_utils import DataProcessor, DataLoader
@@ -27,9 +21,9 @@ def example_basic_usage():
     print("=" * 60)
     
     config = Config()
-    config.data_path = '../data'
-    config.output_path = '../output'
-    config.model_path = '../model'
+    config.data_path = './data'
+    config.output_path = './output'
+    config.model_path = './model'
     
     pipeline = JigsawPipeline(config)
     
@@ -53,9 +47,9 @@ def example_custom_configuration():
     
     config = Config()
     
-    config.data_path = '../data'
-    config.output_path = '../output'
-    config.model_path = '../model'
+    config.data_path = './data'
+    config.output_path = './output'
+    config.model_path = './model'
     
     config.random_seed = 123
     config.device = 'cuda:0'
@@ -106,8 +100,8 @@ def example_data_processing_only():
     print("=" * 60)
     
     config = Config()
-    config.data_path = '../data'
-    config.output_path = '../output'
+    config.data_path = './data'
+    config.output_path = './output'
     
     processor = DataProcessor(config)
     
@@ -138,9 +132,9 @@ def example_single_model_training():
     print("=" * 60)
     
     config = Config()
-    config.data_path = '../data'
-    config.output_path = '../output'
-    config.model_path = '../model'
+    config.data_path = './data'
+    config.output_path = './output'
+    config.model_path = './model'
     
     pipeline = JigsawPipeline(config)
     
@@ -172,9 +166,9 @@ def example_model_evaluation():
     print("=" * 60)
     
     config = Config()
-    config.data_path = '../data'
-    config.output_path = '../output'
-    config.model_path = '../model'
+    config.data_path = './data'
+    config.output_path = './output'
+    config.model_path = './model'
     
     evaluator = ModelEvaluator(config)
     
@@ -220,9 +214,9 @@ def example_inference_only():
     print("=" * 60)
     
     config = Config()
-    config.data_path = '../data'
-    config.output_path = '../output'
-    config.model_path = '../model'
+    config.data_path = './data'
+    config.output_path = './output'
+    config.model_path = './model'
     
     pipeline = JigsawPipeline(config)
     
@@ -255,9 +249,9 @@ def example_comparison_bert_vs_gpt():
     print("=" * 60)
     
     config = Config()
-    config.data_path = '../data'
-    config.output_path = '../output'
-    config.model_path = '../model'
+    config.data_path = './data'
+    config.output_path = './output'
+    config.model_path = './model'
     
     config.bert_config.update({
         'num_epochs': 1,

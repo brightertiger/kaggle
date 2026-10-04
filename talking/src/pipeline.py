@@ -1,13 +1,9 @@
 import pandas as pd
-import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import warnings
-warnings.filterwarnings('ignore')
+from typing import Dict
 
 from .core.config import Config
 from .data.preprocessing import DataPreprocessor
-from .data.data_utils import TalkingDataProcessor
+from .data.data_utils import FeatureEngineer
 from .models.trainer import ModelTrainer
 from .models.models import ModelEnsemble
 
@@ -64,6 +60,8 @@ class TalkingDataPipeline:
     def create_feature_engineered_data(self):
         """Create feature-engineered datasets for training and testing."""
         
+        self.config._create_directories()
+
         # Load processed data
         train_data = pd.read_feather(self.config.PROCESSED_DATA_DIR / 'train_data.feather')
         valid_data = pd.read_feather(self.config.PROCESSED_DATA_DIR / 'valid_data.feather')
@@ -97,7 +95,7 @@ class TalkingDataPipeline:
         print(f"Positive rate (valid): {valid_data[self.config.TARGET_COLUMN].mean():.4f}")
         
         # Train models
-        model_names = ['model_1', 'model_2']
+        model_names = self.config.MODEL_NAMES
         metrics = self.trainer.train_multiple_models(train_data, valid_data, model_names)
         
         # Print summary
@@ -120,17 +118,17 @@ class TalkingDataPipeline:
         submit_dir.mkdir(exist_ok=True)
         
         # Generate predictions for each model
-        model_names = ['model_1', 'model_2']
+        model_names = self.config.MODEL_NAMES
         
         for model_name in model_names:
             # Validation predictions
-            valid_pred = self.trainer.generate_predictions(
+            self.trainer.generate_predictions(
                 valid_data, model_name, 
                 score_dir / f'{model_name}.csv'
             )
             
             # Test predictions
-            test_pred = self.trainer.create_submission(
+            self.trainer.create_submission(
                 test_data, model_name,
                 submit_dir / f'{model_name}.csv'
             )
@@ -144,13 +142,13 @@ class TalkingDataPipeline:
         submit_dir = self.config.DATA_DIR / 'submit'
         
         # List of model prediction files
-        model_files = [submit_dir / f'model_{i}.csv' for i in range(1, 3)]
+        model_files = [submit_dir / f'{name}.csv' for name in self.config.MODEL_NAMES]
         
         # Create ensemble
         ensemble_submission = self.ensemble.blend_predictions(
             model_files, 
             submit_dir / 'ensemble.csv',
-            mode='submit'
+            mode='submit', model_names=self.config.MODEL_NAMES
         )
         
         # Save final submission
@@ -175,39 +173,19 @@ class TalkingDataPipeline:
         # Load ranking features
         ranking_features = self._load_ranking_features()
         
-        # Merge count features
-        for name, feature_df in count_features.items():
-            if name == 'user_count':
-                data = data.merge(feature_df, on=['ip', 'device', 'os'], how='left')
-            elif name == 'user_app_count':
-                data = data.merge(feature_df, on=['ip', 'device', 'os', 'app'], how='left')
-            else:
-                # Extract feature name and columns for merging
-                feature_cols = [col for col in feature_df.columns if col != name]
-                data = data.merge(feature_df, on=feature_cols, how='left')
-        
-        # Merge unique features
-        for name, feature_df in unique_features.items():
-            if 'ip_' in name:
-                data = data.merge(feature_df, on='ip', how='left')
-        
-        # Merge ranking features
-        for name, feature_df in ranking_features.items():
-            if name == 'ip_rank':
-                data = data.merge(feature_df, on='ip', how='left')
-            elif 'app_channel' in name:
-                data = data.merge(feature_df, on=['app', 'channel'], how='left')
-            elif 'app_os' in name:
-                data = data.merge(feature_df, on=['app', 'os'], how='left')
-            elif 'channel_os' in name:
-                data = data.merge(feature_df, on=['channel', 'os'], how='left')
-        
+        for feature_group in (count_features, unique_features, ranking_features):
+            for name, feature_df in feature_group.items():
+                keys = [column for column in feature_df.columns if column != name]
+                data = data.merge(feature_df, on=keys, how='left', sort=False,
+                                  validate='many_to_one')
+
         # Fill missing values for ranking features
         ranking_cols = [col for col in data.columns if 'rank' in col]
         data[ranking_cols] = data[ranking_cols].fillna(11)
         
         # Fill other missing values
-        data = data.fillna(0)
+        numeric_cols = data.select_dtypes(include='number').columns
+        data[numeric_cols] = data[numeric_cols].fillna(0)
         
         # Optimize data types
         data = self._optimize_dtypes(data)
@@ -219,15 +197,14 @@ class TalkingDataPipeline:
         features = {}
         
         count_files = [
-            'ip', 'app', 'os', 'ip_day_hour', 'ip_app', 'ip_app_os',
-            'ip_device', 'app_channel', 'ip_hour_os', 'ip_hour_app',
+            'ip_cnt', 'app_cnt', 'os_cnt', 'ip_day_hour_cnt', 'ip_app_cnt', 'ip_app_os_cnt',
+            'ip_device_cnt', 'app_channel_cnt', 'ip_hour_os_cnt', 'ip_hour_app_cnt',
             'user_count', 'user_app_count'
         ]
         
         for filename in count_files:
             file_path = self.config.FEATURES_DIR / 'count' / f'{filename}.feather'
-            if file_path.exists():
-                features[f'{filename}_cnt'] = pd.read_feather(file_path)
+            features[filename] = pd.read_feather(file_path)
         
         return features
     
@@ -239,8 +216,7 @@ class TalkingDataPipeline:
         
         for filename in unique_files:
             file_path = self.config.FEATURES_DIR / 'unique' / f'{filename}.feather'
-            if file_path.exists():
-                features[filename] = pd.read_feather(file_path)
+            features[filename] = pd.read_feather(file_path)
         
         return features
     
@@ -248,28 +224,18 @@ class TalkingDataPipeline:
         """Load ranking features."""
         features = {}
         
-        rank_files = ['ip', 'app_channel', 'app_os', 'channel_os']
+        rank_files = ['ip_rank', 'app_channel_rank', 'app_os_rank', 'channel_os_rank']
         
         for filename in rank_files:
             file_path = self.config.FEATURES_DIR / 'rank' / f'{filename}.feather'
-            if file_path.exists():
-                features[f'{filename}_rank'] = pd.read_feather(file_path)
+            features[filename] = pd.read_feather(file_path)
         
         return features
     
     def _optimize_dtypes(self, data: pd.DataFrame) -> pd.DataFrame:
         """Optimize data types to reduce memory usage."""
-        for column in data.columns:
-            if data[column].dtype == 'int64':
-                if data[column].max() <= 250:
-                    data[column] = data[column].astype('uint8')
-                elif data[column].max() <= 65000 and data[column].min() >= 0:
-                    data[column] = data[column].astype('uint16')
-                elif data[column].max() <= 4294967295 and data[column].min() >= 0:
-                    data[column] = data[column].astype('uint32')
-        
-        return data
-    
+        return FeatureEngineer(self.config)._optimize_dtypes(data)
+
     def evaluate_models(self) -> Dict:
         """Evaluate all trained models."""
         
@@ -277,7 +243,7 @@ class TalkingDataPipeline:
         valid_data = pd.read_feather(self.config.MODELS_DIR / 'valid_data.feather')
         
         # Evaluate each model
-        model_names = ['model_1', 'model_2']
+        model_names = self.config.MODEL_NAMES
         evaluations = {}
         
         for model_name in model_names:

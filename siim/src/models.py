@@ -4,10 +4,13 @@ from efficientnet_pytorch import EfficientNet
 from .config import Config
 
 class MelanomaClassifier(nn.Module):
-    def __init__(self, model_name=Config.MODEL_NAME, num_classes=Config.NUM_CLASSES, metadata_dim=Config.METADATA_DIM):
+    def __init__(self, model_name=Config.MODEL_NAME, num_classes=Config.NUM_CLASSES, metadata_dim=Config.METADATA_DIM, pretrained=True, image_size=Config.IMAGE_SIZE):
         super(MelanomaClassifier, self).__init__()
         
-        self.backbone = EfficientNet.from_pretrained(model_name, advprop=True)
+        self.model_config = dict(model_name=model_name, num_classes=num_classes,
+                                 metadata_dim=metadata_dim, image_size=image_size)
+        self.backbone = (EfficientNet.from_pretrained(model_name, advprop=True, image_size=image_size)
+                         if pretrained else EfficientNet.from_name(model_name, image_size=image_size))
         
         # Replace the classifier
         in_features = self.backbone._fc.in_features
@@ -34,10 +37,13 @@ class MelanomaClassifier(nn.Module):
         return output
 
 class MelanomaClassifierV2(nn.Module):
-    def __init__(self, model_name=Config.MODEL_NAME, num_classes=Config.NUM_CLASSES, metadata_dim=Config.METADATA_DIM):
+    def __init__(self, model_name=Config.MODEL_NAME, num_classes=Config.NUM_CLASSES, metadata_dim=Config.METADATA_DIM, pretrained=True, image_size=Config.IMAGE_SIZE):
         super(MelanomaClassifierV2, self).__init__()
         
-        self.backbone = EfficientNet.from_pretrained(model_name, advprop=True)
+        self.model_config = dict(model_name=model_name, num_classes=num_classes,
+                                 metadata_dim=metadata_dim, image_size=image_size)
+        self.backbone = (EfficientNet.from_pretrained(model_name, advprop=True, image_size=image_size)
+                         if pretrained else EfficientNet.from_name(model_name, image_size=image_size))
         
         # Replace the classifier
         in_features = self.backbone._fc.in_features

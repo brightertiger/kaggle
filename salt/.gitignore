@@ -73,8 +73,8 @@ ehthumbs.db
 Thumbs.db
 
 # Data and models
-data/
-models/
+/data/
+/models/
 *.pth
 *.pkl
 *.npy
@@ -90,3 +90,8 @@ logs/
 # Temporary files
 tmp/
 temp/
+
+# Local runs
+sample_data/
+dry_run_output/
+output/

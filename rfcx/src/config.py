@@ -1,6 +1,7 @@
-import os
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import Optional
+
+import torch
 
 @dataclass
 class AudioConfig:
@@ -8,7 +9,7 @@ class AudioConfig:
     n_mels: int = 300
     fmin: int = 0
     fmax: Optional[int] = None
-    segment_length: int = 5
+    segment_length: float = 5
     overlap_ratio: float = 0.75
 
 @dataclass
@@ -16,7 +17,8 @@ class ModelConfig:
     num_classes: int = 24
     input_size: int = 300
     pretrained: bool = True
-    dropout: float = 0.5
+    # Override only for smoke tests; production keeps the selected Res2Net/ResNeSt.
+    backbone: Optional[str] = None
 
 @dataclass
 class TrainingConfig:
@@ -39,13 +41,17 @@ class DataConfig:
 
 @dataclass
 class Config:
-    audio: AudioConfig = AudioConfig()
-    model: ModelConfig = ModelConfig()
-    training: TrainingConfig = TrainingConfig()
-    data: DataConfig = DataConfig()
+    audio: AudioConfig = field(default_factory=AudioConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    data: DataConfig = field(default_factory=DataConfig)
     seed: int = 2017
-    device: str = "cuda:0"
+    device: str = field(default_factory=lambda: "cuda:0" if torch.cuda.is_available() else "cpu")
     
     def __post_init__(self):
-        os.makedirs(self.data.model_save_path, exist_ok=True)
-        os.makedirs(self.data.predictions_path, exist_ok=True)
+        if self.device.startswith("cuda") and not torch.cuda.is_available():
+            self.device = "cpu"
+        if self.audio.segment_length <= 0 or self.audio.sample_rate <= 0:
+            raise ValueError("Audio duration and sample rate must be positive")
+        if not 0 <= self.audio.overlap_ratio < 1:
+            raise ValueError("overlap_ratio must be in [0, 1)")

@@ -2,10 +2,8 @@
 
 import argparse
 import sys
-import os
+import json
 from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.config import Config
 from src.pipeline import JigsawPipeline
@@ -55,22 +53,22 @@ Examples:
     parser.add_argument(
         '--data-path',
         type=str,
-        default='../data',
-        help='Path to data directory (default: ../data)'
+        default='./data',
+        help='Path to data directory (default: ./data)'
     )
     
     parser.add_argument(
         '--model-path',
         type=str,
-        default='../model',
-        help='Path to model directory (default: ../model)'
+        default='./model',
+        help='Path to model directory (default: ./model)'
     )
     
     parser.add_argument(
         '--output-path',
         type=str,
-        default='../output',
-        help='Path to output directory (default: ../output)'
+        default='./output',
+        help='Path to output directory (default: ./output)'
     )
     
     parser.add_argument(
@@ -128,18 +126,8 @@ Examples:
         help='Enable verbose output'
     )
     
+    parser.add_argument('--config', type=Path, help='JSON configuration; explicit CLI flags override it')
     args = parser.parse_args()
-    
-    print("🚀 Jigsaw Toxic Comment Classification Pipeline")
-    print("=" * 60)
-    print(f"Step: {args.step}")
-    print(f"Model Type: {args.model_type}")
-    print(f"Data Path: {args.data_path}")
-    print(f"Model Path: {args.model_path}")
-    print(f"Output Path: {args.output_path}")
-    print(f"Device: {args.device}")
-    print(f"Random Seed: {args.random_seed}")
-    print("=" * 60)
     
     try:
         config = Config()
@@ -163,6 +151,20 @@ Examples:
             'num_epochs': args.num_epochs
         })
         
+        if args.config:
+            config.update_from_dict(json.loads(args.config.read_text()))
+            # Reapply only explicitly supplied options over the JSON configuration.
+            explicit = {arg.split('=')[0] for arg in sys.argv[1:] if arg.startswith('--')}
+            for field in ('data_path', 'model_path', 'output_path', 'device', 'random_seed', 'n_folds', 'max_length'):
+                if '--' + field.replace('_', '-') in explicit:
+                    setattr(config, field, getattr(args, field))
+            for field in ('batch_size', 'learning_rate', 'num_epochs'):
+                if '--' + field.replace('_', '-') in explicit:
+                    config.bert_config[field] = getattr(args, field)
+                    config.gpt_config[field] = getattr(args, field)
+        print("Jigsaw Unintended Bias in Toxicity Classification")
+        print(f"Step: {args.step}; models: {args.model_type}")
+        print(f"Data: {config.data_path}; models: {config.model_path}; output: {config.output_path}")
         pipeline = JigsawPipeline(config)
         
         if args.step == 'process-data':
@@ -177,7 +179,7 @@ Examples:
         
         elif args.step == 'evaluate':
             print("📈 Evaluating models...")
-            results = pipeline.evaluate_models()
+            results = pipeline.evaluate_models(args.model_type)
             
             print("\n📊 Evaluation Results:")
             print("-" * 40)

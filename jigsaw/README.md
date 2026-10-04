@@ -1,481 +1,241 @@
-# Jigsaw Toxic Comment Classification
+# [Jigsaw Unintended Bias in Toxicity Classification](https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification)
 
-A comprehensive deep learning solution for the [Jigsaw Toxic Comment Classification Challenge](https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge), which aims to identify and classify toxic comments while addressing bias issues in automated content moderation systems.
+**Final rank: 146 / 3,165 teams · Silver medal**
 
-## 🏆 Competition Overview
+I’m Ujjwal Singh Rao, a Kaggle Master. This folder preserves my bias-aware
+comment classification approach: transformer representations, identity-based
+sample weights, auxiliary toxicity supervision, and fold averaging.
+The rank above comes from the [portfolio competition table](../README.md).
+This is a runnable reconstruction of the retained code; it does not include
+original competition checkpoints or a verified reproduction of the leaderboard score.
 
-**Challenge**: Build a multi-headed model that's capable of detecting different types of toxicity like threats, obscenity, insults, and identity-based hate
-- **Target**: Multi-label classification (6 toxicity types)
-- **Evaluation Metric**: Bias-aware AUC metric that penalizes models for bias against identity groups
-- **Dataset**: ~160K comments with toxicity labels and identity annotations
-- **Domain**: NLP, Content Moderation, Bias Detection, Social Media Analysis
+## Problem
 
-**Business Impact**: This solution addresses critical challenges in automated content moderation, helping platforms identify toxic content while minimizing bias against protected identity groups, ultimately creating safer online communities.
+I needed to predict whether a comment was toxic without treating an identity
+mention as evidence of toxicity. A model could achieve a strong overall ranking
+while still over-scoring ordinary discussion about a particular community.
 
-## 🚀 Key Features
+The competition combines overall ROC AUC with identity-sensitive AUC measures.
+For each identity, these assess discrimination within the subgroup and across
+subgroup/background boundaries. The negative power mean emphasizes weak groups.
+The implemented metric uses power `-5` and an overall AUC weight of `0.25`.
+See the [competition evaluation](https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification/overview/evaluation).
 
-- **Multi-Model Architecture**: BERT and GPT-2 based classifiers with ensemble capabilities
-- **Bias-Aware Training**: Sample weighting system to reduce bias against identity groups
-- **Auxiliary Task Learning**: Multi-task learning with auxiliary toxicity classification
-- **Cross-Validation**: Robust 5-fold cross-validation for reliable model evaluation
-- **Bias Evaluation**: Comprehensive bias metrics including subgroup AUC, BPSN AUC, and BNSP AUC
-- **Production-Ready Pipeline**: Modular design with CLI interface and programmatic API
-- **Advanced Tokenization**: Optimized text preprocessing for transformer models
+I train on continuous annotation targets. Evaluation binarizes target and
+identity annotations at `>= 0.5`, then computes AUC from continuous predictions.
+This distinction matters for comments with mixed annotator judgments.
 
-## 📁 Project Structure
+## Data
 
+The inputs are CSV files containing English comment text and annotation scores.
+The schema identifies this as the unintended-bias competition; the multilingual
+and original multi-label Jigsaw competitions are separate portfolio entries.
+
+| File / field | Role |
+| --- | --- |
+| `train.csv`: `id`, `comment_text` | Unique identifier and raw comment |
+| `target` | Continuous toxicity target |
+| `severe_toxicity`, `obscene`, `identity_attack`, `insult`, `threat` | Auxiliary targets |
+| Identity columns | Annotation scores used for weights and bias evaluation |
+| `test.csv`: `id`, `comment_text` | Unlabelled comments to score |
+| `sample_submission.csv`: `id`, `prediction` | Competition output format; optional for this pipeline |
+
+The configured identities are `male`, `female`, `homosexual_gay_or_lesbian`,
+`christian`, `jewish`, `muslim`, `black`, `white`, and
+`psychiatric_or_mental_illness`.
+
+Missing identity annotations are treated as absent when building group masks.
+Missing text becomes `none blank`; missing training targets become zero.
+These are implementation conventions, not evidence that an unannotated identity
+is absent. Label imbalance and uneven identity coverage make aggregate metrics
+insufficient, so I retain identity columns through validation.
+
+## Approach
+
+### Validation and preprocessing
+
+I use shuffled, seeded stratified cross-validation, with sample weight as the
+stratum. The default is `5` folds. This preserves the distribution of weighted
+training categories, but does not guarantee every identity has both classes in
+every validation fold. Undefined subgroup AUCs are reported as `NaN`; they are
+not silently converted into successful scores.
+
+I keep text processing light and let each backbone’s tokenizer build its inputs.
+The default maximum length is `222` tokens. Training and inference use the same
+truncation, right padding, and explicit attention masks.
+There is no separate tabular feature model: token representations are the features.
+
+### Identity-based sample weights
+
+Each comment starts at weight `1`. The retained weighting rule adds:
+
+- A term when any configured identity score reaches the threshold.
+- A term for toxic comments when any configured identity is below the threshold.
+- A term for non-toxic comments when any configured identity reaches the threshold.
+
+The second condition is deliberately described precisely: it is an **any-absent-
+identity** test, not a test that all identities are absent. I preserve the code’s
+weighting rule rather than silently replacing it with a different formulation.
+These annotations affect training weights and evaluation; they are not model inputs.
+
+### BERT with auxiliary supervision
+
+The main branch fine-tunes `bert-base-uncased`. Its pooled representation passes
+through dropout into a primary toxicity head and an auxiliary head.
+The auxiliary head predicts `target` plus the other toxicity labels.
+
+The retained objective is weighted mean squared error on the primary target,
+scaled by `3.5`, plus mean squared error on the auxiliary outputs.
+I retain the original sigmoid mapping at inference, which preserves score order.
+Because the BERT objective is MSE, these outputs are not calibrated probabilities.
+
+### GPT-2 as a complementary branch
+
+The second branch fine-tunes `gpt2`. It concatenates mean and max pooling over
+valid token states, then uses dropout and a binary classification head.
+Padding is excluded from both pooling operations.
+
+This branch uses weighted binary cross-entropy with logits. Its inference scores
+come from a sigmoid. GPT-2 uses its own tokenizer and EOS-based padding;
+BERT special tokens are never manually inserted into GPT inputs.
+
+```mermaid
+flowchart TD
+    A[Training CSV: comments and annotations] --> B[Fill missing values and compute weights]
+    B --> C[Stratified folds; retain identity annotations]
+    C --> D[BERT tokenizer and encoder]
+    C --> E[GPT-2 tokenizer and transformer]
+    D --> F[Pooled state; primary and auxiliary MSE heads]
+    E --> G[Masked mean/max pooling; weighted BCE head]
+    F --> H[Validation loss and best checkpoint per fold]
+    G --> H
+    H --> I[Overall and subgroup bias evaluation]
+    J[Test comments] --> K[Same tokenizers and restored checkpoints]
+    H --> K
+    K --> L[Average folds; optionally average model families]
+    L --> M[id,prediction submission CSV]
 ```
+
+### Training and prediction
+
+Both branches use AdamW, gradient accumulation, gradient clipping, and linear
+warmup followed by linear decay. Optional mixed precision is enabled only on CUDA.
+The default training duration is `3` epochs, with patience-based early stopping.
+Checkpoint selection uses **validation loss**; bias metrics are reported separately.
+
+I average predictions across folds. With `--model-type both`, the pipeline also
+writes an equal average of the BERT and GPT-2 submissions. This is a transparent
+combination supported by the current runner, not a claim about recovered final
+competition ensemble weights. There is no leaderboard-tuned post-processing.
+
+## What mattered most
+
+These are the central choices visible in the retained solution. I do not have
+saved ablations that would justify assigning a score gain to any individual one.
+
+- Identity-aware weighting makes the bias objective influence optimization.
+- Auxiliary toxicity labels give the BERT representation additional supervision.
+- Subgroup, BPSN, and BNSP AUC expose errors hidden by overall AUC.
+- Fold averaging reduces dependence on a single train/validation split.
+- Consistent tokenization and padding keep training and inference aligned.
+
+## Repository layout
+
+```text
 jigsaw/
-├── main.py                    # Main entry point with CLI interface
-├── example_usage.py           # Usage demonstrations and examples
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-└── src/                       # Source code package
-    ├── __init__.py           # Package initialization
-    ├── config.py             # Centralized configuration management
-    ├── data_utils.py         # Data loading and preprocessing utilities
-    ├── models.py             # BERT and GPT model architectures
-    ├── evaluation.py         # Bias evaluation metrics and assessment
-    └── pipeline.py           # End-to-end pipeline orchestration
+├── README.md           # Solution narrative and reproducible commands
+├── requirements.txt    # Runtime and offline tokenizer dependencies
+├── main.py             # CLI for full runs and individual stages
+├── example_usage.py    # Programmatic training and evaluation examples
+├── dry_run.py          # Synthetic data, local tokenizers, CPU end-to-end check
+├── test_regressions.py # Regression checks for masks, metrics, loss, and updates
+├── .gitignore          # Excludes generated datasets, checkpoints, and caches
+└── src/
+    ├── __init__.py      # Public package exports
+    ├── config.py        # Paths, backbone settings, and training configuration
+    ├── data_utils.py    # Schema checks, sample weights, and persisted folds
+    ├── models.py        # Model heads, datasets, losses, and training loops
+    ├── evaluation.py    # Classification and identity-sensitive metrics
+    └── pipeline.py      # Training, checkpoint restoration, and submissions
 ```
 
-## 🛠️ Installation
+## How to run
 
-1. **Clone the repository**:
+Run these commands from this folder with Python 3.11 or newer:
+
 ```bash
-git clone <repository-url>
-cd jigsaw
+python -m pip install -r requirements.txt
 ```
 
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
+Download the [competition data](https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification/data)
+after accepting Kaggle’s access terms. Place the extracted files here:
 
-3. **Prepare data**:
-   - Download Jigsaw Toxic Comment Classification dataset from Kaggle
-   - Place files in `../data/` directory:
-     - `train.csv` - Training comments with toxicity labels
-     - `test.csv` - Test comments for prediction
-
-## 📊 Data Preparation
-
-### Dataset Structure
-```
+```text
 data/
-├── train.csv                  # Training data with toxicity labels
-├── test.csv                   # Test data for predictions
-├── train_fold_1.csv          # Cross-validation fold 1 training
-├── train_fold_2.csv          # Cross-validation fold 2 training
-├── ...
-├── valid_fold_1.csv          # Cross-validation fold 1 validation
-├── valid_fold_2.csv          # Cross-validation fold 2 validation
-├── ...
-├── sample_weights.csv         # Computed sample weights for bias mitigation
-└── test_processed.csv        # Processed test data
+├── train.csv
+├── test.csv
+└── sample_submission.csv  # Optional reference template
 ```
 
-### Data Processing Pipeline
+The input directory must be writable: preprocessing also stores sample weights,
+fold CSVs, and `test_processed.csv` there. Extra source columns are ignored.
+Default output paths stay inside this competition folder.
+
 ```bash
-python main.py --step process-data
+python main.py --step full --model-type both \
+  --data-path ./data --model-path ./model --output-path ./output
 ```
 
-This creates cross-validation splits and sample weights for bias mitigation.
+Production mode downloads the configured pretrained weights and tokenizers on
+first use, or reads the local Hugging Face cache. CUDA is used when available;
+otherwise the runner falls back to CPU. `--device cpu` explicitly selects CPU.
 
-## 🧠 Model Architecture
+For separate stages, reuse the saved run configuration:
 
-### Multi-Model Approach
-The solution employs both BERT and GPT-2 architectures for comprehensive toxic comment classification:
-
-#### BERT Classifier
-```python
-class BERTClassifier(nn.Module):
-    def __init__(self, config: Config):
-        self.bert = BertModel.from_pretrained('bert-base-uncased')
-        self.dropout = nn.Dropout(0.1)
-        self.classifier = nn.Linear(768, 1)
-        self.aux_classifier = nn.Linear(768, 6)  # Auxiliary tasks
-```
-
-**Key Features**:
-- **Pre-trained BERT**: Leverages BERT-base-uncased for robust text understanding
-- **Multi-task Learning**: Primary toxicity classification + auxiliary toxicity type classification
-- **Custom Loss Function**: Weighted MSE loss with auxiliary task regularization
-- **Identity-Aware Training**: Sample weighting to reduce bias
-
-#### GPT-2 Classifier
-```python
-class GPTClassifier(nn.Module):
-    def __init__(self, config: Config):
-        self.transformer = GPT2Model.from_pretrained('gpt2')
-        self.dropout = nn.Dropout(0.1)
-        self.classifier = nn.Linear(1536, 1)  # Avg + Max pooling
-```
-
-**Key Features**:
-- **Pre-trained GPT-2**: Utilizes GPT-2 for autoregressive text understanding
-- **Pooling Strategy**: Average and max pooling for sentence representation
-- **Binary Classification**: Focused on primary toxicity detection
-- **Efficient Architecture**: Optimized for faster training and inference
-
-### Bias Mitigation Strategy
-
-#### Sample Weighting System
-```python
-def create_sample_weights(self, data: pd.DataFrame) -> pd.DataFrame:
-    weights = data[['id', 'target'] + identity_columns].copy()
-    weights['base'] = 1
-    
-    # Normal comments with identity mentions
-    identity_mask = (weights[identity_columns].fillna(0).values >= 0.5)
-    weights['normal'] = identity_mask.sum(axis=1).astype(bool).astype(int)
-    
-    # Toxic comments without identity mentions (group_1)
-    toxic_mask = (weights['target'].values >= 0.5)
-    non_identity_mask = (weights[identity_columns].fillna(0).values < 0.5)
-    weights['group_1'] = toxic_mask.astype(int) + non_identity_mask.sum(axis=1).astype(bool).astype(int)
-    weights['group_1'] = (weights['group_1'] > 1).astype(bool).astype(int)
-    
-    # Non-toxic comments with identity mentions (group_2)
-    non_toxic_mask = (weights['target'].values < 0.5)
-    weights['group_2'] = non_toxic_mask.astype(int) + identity_mask.sum(axis=1).astype(bool).astype(int)
-    weights['group_2'] = (weights['group_2'] > 1).astype(bool).astype(int)
-    
-    weights['weight'] = weights['base'] + weights['normal'] + weights['group_1'] + weights['group_2']
-    return weights
-```
-
-**Weight Categories**:
-- **Base Weight (1)**: All comments
-- **Normal Weight (+1)**: Comments mentioning identity groups
-- **Group 1 Weight (+1)**: Toxic comments without identity mentions
-- **Group 2 Weight (+1)**: Non-toxic comments with identity mentions
-
-## 🔧 Training Configuration
-
-### BERT Training Parameters
-```python
-bert_config = {
-    'model_name': 'bert-base-uncased',
-    'learning_rate': 2e-5,
-    'batch_size': 12,
-    'valid_batch_size': 8,
-    'num_epochs': 3,
-    'warmup_ratio': 0.05,
-    'weight_decay': 0.01,
-    'dropout': 0.1,
-    'gradient_accumulation_steps': 5,
-    'max_grad_norm': 1.0
-}
-```
-
-### GPT Training Parameters
-```python
-gpt_config = {
-    'model_name': 'gpt2',
-    'learning_rate': 2e-5,
-    'batch_size': 12,
-    'valid_batch_size': 5,
-    'num_epochs': 3,
-    'warmup_ratio': 0.05,
-    'weight_decay': 0.01,
-    'dropout': 0.1,
-    'gradient_accumulation_steps': 5,
-    'max_grad_norm': 1.0
-}
-```
-
-### Custom Loss Functions
-
-#### BERT Multi-Task Loss
-```python
-def bert_loss(predictions, targets, aux_predictions, aux_targets, weights):
-    main_loss = F.mse_loss(predictions.squeeze(), targets.squeeze(), reduction='none')
-    weighted_main_loss = torch.mean(weights * main_loss)
-    aux_loss = F.mse_loss(aux_predictions, aux_targets)
-    return 3.5 * weighted_main_loss + aux_loss
-```
-
-#### GPT Binary Classification Loss
-```python
-def gpt_loss(predictions, targets, weights):
-    return F.binary_cross_entropy_with_logits(
-        predictions.squeeze(), targets.squeeze(), weight=weights
-    )
-```
-
-## 📈 Evaluation Metrics
-
-### Bias-Aware Evaluation
-The solution implements comprehensive bias evaluation metrics:
-
-#### Subgroup AUC
-```python
-def compute_subgroup_auc(df, subgroup, label='target', model_name='prediction'):
-    subgroup_examples = df[df[subgroup] > 0.5]
-    return compute_auc(
-        (subgroup_examples[label] > 0.5),
-        subgroup_examples[model_name]
-    )
-```
-
-#### BPSN AUC (Background Positive, Subgroup Negative)
-```python
-def compute_bpsn_auc(df, subgroup, label='target', model_name='prediction'):
-    subgroup_negative = df[(df[subgroup] > 0.5) & (df[label] <= 0.5)]
-    non_subgroup_positive = df[(df[subgroup] <= 0.5) & (df[label] > 0.5)]
-    examples = pd.concat([subgroup_negative, non_subgroup_positive])
-    return compute_auc(examples[label] > 0.5, examples[model_name])
-```
-
-#### BNSP AUC (Background Negative, Subgroup Positive)
-```python
-def compute_bnsp_auc(df, subgroup, label='target', model_name='prediction'):
-    subgroup_positive = df[(df[subgroup] > 0.5) & (df[label] > 0.5)]
-    non_subgroup_negative = df[(df[subgroup] <= 0.5) & (df[label] <= 0.5)]
-    examples = pd.concat([subgroup_positive, non_subgroup_negative])
-    return compute_auc(examples[label] > 0.5, examples[model_name])
-```
-
-#### Final Bias-Aware Metric
-```python
-def get_final_metric(bias_df, overall_auc):
-    power = -5  # Power mean parameter
-    bias_score = np.average([
-        power_mean(bias_df['subgroup_auc'], power),
-        power_mean(bias_df['bpsn_auc'], power),
-        power_mean(bias_df['bnsp_auc'], power)
-    ])
-    return (0.25 * overall_auc) + (0.75 * bias_score)
-```
-
-### Identity Groups Evaluated
-- Male, Female
-- Homosexual, Gay, or Lesbian
-- Christian, Jewish, Muslim
-- Black, White
-- Psychiatric or Mental Illness
-
-## 🎯 Training Pipeline
-
-### Cross-Validation Strategy
-- **5-Fold Stratified CV**: Based on sample weights for balanced representation
-- **Early Stopping**: Prevents overfitting with patience-based stopping
-- **Model Checkpointing**: Saves best models based on validation performance
-- **Bias Monitoring**: Continuous evaluation of bias metrics during training
-
-### Training Process
-1. **Data Preprocessing**: Tokenization, weight computation, CV splits
-2. **Model Initialization**: Pre-trained BERT/GPT-2 with custom heads
-3. **Training Loop**: Gradient accumulation, loss computation, optimization
-4. **Validation**: Bias-aware evaluation after each epoch
-5. **Model Selection**: Best model based on bias-aware metric
-
-## 🔧 Advanced Features
-
-### Text Preprocessing
-- **BERT Tokenization**: CLS/SEP tokens with 222 max length
-- **GPT Tokenization**: Efficient tokenization with padding
-- **Special Token Handling**: Proper handling of unknown tokens
-
-### Model Optimization
-- **Gradient Accumulation**: Effective larger batch sizes
-- **Gradient Clipping**: Prevents exploding gradients
-- **Learning Rate Scheduling**: Warmup and decay strategies
-- **Weight Decay**: Regularization for better generalization
-
-### Evaluation Strategy
-- **Multi-Metric Assessment**: AUC, F1, Precision, Recall
-- **Bias Analysis**: Comprehensive identity group evaluation
-- **Threshold Optimization**: Optimal prediction thresholds
-- **Cross-Model Comparison**: BERT vs GPT performance analysis
-
-## 📈 Results
-
-### Model Performance Comparison
-| Model Type | Final Metric | Overall AUC | Subgroup AUC | Training Time |
-|------------|--------------|-------------|--------------|---------------|
-| BERT | ~0.65-0.70 | ~0.95-0.97 | ~0.85-0.90 | ~2-3 hours |
-| GPT-2 | ~0.62-0.67 | ~0.93-0.96 | ~0.82-0.87 | ~1-2 hours |
-| Ensemble | ~0.67-0.72 | ~0.96-0.98 | ~0.87-0.92 | ~3-5 hours |
-
-### Key Insights
-1. **Bias Mitigation Effectiveness**: Sample weighting significantly reduces bias against identity groups
-2. **Multi-Task Learning**: Auxiliary tasks improve primary toxicity classification
-3. **Model Architecture**: BERT slightly outperforms GPT-2 for this task
-4. **Cross-Validation Robustness**: 5-fold CV provides reliable performance estimates
-
-### Bias Reduction Impact
-- **Subgroup AUC Improvement**: 15-20% improvement in minority group classification
-- **BPSN/BNSP Balance**: Better balance between different bias scenarios
-- **Identity Group Fairness**: Reduced false positive rates for identity groups
-
-## 🚀 Usage
-
-### Quick Start
 ```bash
-# 1. Run complete pipeline
-python main.py --step full --model-type both
-
-# 2. Or run individual steps
-python main.py --step process-data    # Data preparation
-python main.py --step train --model-type bert  # BERT training
-python main.py --step train --model-type gpt   # GPT training
-python main.py --step evaluate        # Model evaluation
-python main.py --step predict --model-type bert  # Generate predictions
+python main.py --step evaluate --model-type both --config ./model/config.json
+python main.py --step predict --model-type both --config ./model/config.json
 ```
 
-### Custom Configuration
+`--step process-data` and `--step train` are also available. CLI flags override
+matching JSON settings. Use `python main.py --help` for paths and training options.
+JSON supports nested `bert_config`, `gpt_config`, and `training_config` overrides.
+The output directory contains `predictions/`, `evaluations/`, and `submissions/`.
+Each submission has exactly `id,prediction`, in test-file order.
+
+### Offline dry run
+
 ```bash
-# Custom training parameters
-python main.py --step full \
-    --data-path /path/to/data \
-    --output-path /path/to/output \
-    --model-path /path/to/models \
-    --batch-size 8 \
-    --learning-rate 1e-5 \
-    --num-epochs 2 \
-    --random-seed 42
+python dry_run.py
 ```
 
-### Programmatic Usage
-```python
-from src.config import Config
-from src.pipeline import JigsawPipeline
+This creates `sample_data/` with `48` training comments and `5` test comments,
+including missing text, missing annotations, and a threshold-boundary target.
+It builds local WordPiece and byte-level BPE tokenizers and random-initialized
+BERT/GPT-2 models with `2` layers and hidden size `32`.
+Both branches train for `1` epoch over `2` folds on CPU with network access disabled.
 
-# Initialize pipeline
-config = Config()
-config.data_path = '../data'
-config.output_path = '../output'
-config.model_path = '../model'
+The run covers preprocessing, token features, training, validation, checkpoint
+reload, fold/model averaging, submission writing, and fresh-instance evaluation.
+It asserts finite metrics and predictions, valid score ranges, and matching IDs.
+No pipeline stages are skipped. Synthetic metrics are only a software check.
 
-pipeline = JigsawPipeline(config)
+Generated artifacts go into `dry_run_output/`; both generated directories are ignored.
+To exercise the CLI using the same offline configuration:
 
-# Run specific steps
-pipeline.process_data()
-pipeline.train_all_models('bert')
-results = pipeline.evaluate_models()
-predictions = pipeline.generate_test_predictions('bert')
+```bash
+python main.py --step predict --model-type both --config dry_run_output/config.json
+python -m unittest -q test_regressions
+python -m compileall -q .
 ```
 
-### Model Inference
-```python
-from src.models import BERTClassifier, GPTClassifier
-from src.pipeline import JigsawPipeline
+## Lessons / what I’d do differently
 
-# Load trained model
-config = Config()
-pipeline = JigsawPipeline(config)
-
-# Generate predictions
-predictions = pipeline.generate_test_predictions('bert')
-print(f"Generated {len(predictions)} predictions")
-```
-
-## 🔬 Technical Details
-
-### Data Processing Strategy
-- **Sample Weighting**: Multi-factor weighting system for bias mitigation
-- **Cross-Validation**: Stratified splits based on weight distribution
-- **Text Preprocessing**: Optimized tokenization for transformer models
-
-### Model Architecture Details
-- **BERT**: 12-layer transformer with 768 hidden dimensions
-- **GPT-2**: 12-layer transformer with 768 hidden dimensions
-- **Custom Heads**: Task-specific classification layers
-- **Pooling Strategies**: CLS token (BERT) vs Avg/Max pooling (GPT-2)
-
-### Training Optimization
-- **AdamW Optimizer**: Weight decay regularization
-- **Learning Rate Scheduling**: Linear warmup with cosine decay
-- **Gradient Accumulation**: Effective batch size optimization
-- **Mixed Precision**: Optional FP16 training for efficiency
-
-### Hardware Requirements
-- **GPU**: NVIDIA GPU with 8GB+ VRAM recommended
-- **RAM**: 16GB+ for model training and data processing
-- **Storage**: 10GB+ for dataset, models, and outputs
-- **CPU**: Multi-core recommended for data preprocessing
-
-### Performance Optimization
-- **Batch Processing**: Optimized batch sizes for memory efficiency
-- **Data Loading**: Multi-worker data loading with pin memory
-- **Model Checkpointing**: Efficient model saving and loading
-- **Memory Management**: Proper cleanup and garbage collection
-
-## 📚 Key Learnings
-
-1. **Bias in AI Systems**: Automated content moderation can inadvertently perpetuate bias against protected groups
-2. **Multi-Task Learning**: Auxiliary tasks can improve primary task performance while reducing bias
-3. **Sample Weighting**: Strategic weighting of training examples can effectively reduce model bias
-4. **Evaluation Metrics**: Bias-aware metrics are crucial for fair AI system evaluation
-5. **Cross-Validation**: Robust evaluation strategies are essential for reliable model assessment
-
-## 🎯 Business Applications
-
-### Content Moderation
-- **Social Media Platforms**: Automated toxic comment detection
-- **Online Communities**: Forum and discussion moderation
-- **Customer Support**: Inappropriate message filtering
-- **Educational Platforms**: Safe learning environment maintenance
-
-### Bias Detection and Mitigation
-- **AI Fairness**: Bias detection in automated systems
-- **Algorithmic Auditing**: Regular bias assessment of AI models
-- **Inclusive AI**: Developing fair and equitable AI systems
-- **Policy Development**: Informing content moderation policies
-
-### Research and Development
-- **NLP Research**: Bias in language models
-- **Fairness Studies**: Algorithmic bias research
-- **Model Development**: Bias-aware model architectures
-- **Evaluation Methods**: Bias-aware evaluation metrics
-
-## 🎯 Future Improvements
-
-### Model Enhancements
-- **Advanced Architectures**: RoBERTa, DeBERTa, or ELECTRA models
-- **Ensemble Methods**: Combining multiple model predictions
-- **Attention Mechanisms**: Interpretable attention visualization
-- **Multi-Modal Learning**: Incorporating additional features
-
-### Bias Mitigation
-- **Adversarial Training**: Adversarial debiasing techniques
-- **Fairness Constraints**: Optimization with fairness constraints
-- **Counterfactual Analysis**: Understanding model decision boundaries
-- **Intersectional Bias**: Addressing multiple identity dimensions
-
-### Training Optimization
-- **Hyperparameter Optimization**: Automated hyperparameter tuning
-- **Architecture Search**: Neural architecture search for optimal models
-- **Transfer Learning**: Domain-specific pre-training
-- **Active Learning**: Intelligent sample selection for labeling
-
-### Evaluation Enhancement
-- **Real-world Evaluation**: Testing on live content moderation systems
-- **Human-AI Collaboration**: Human-in-the-loop evaluation
-- **Longitudinal Studies**: Long-term bias impact assessment
-- **Cross-Cultural Validation**: Multi-cultural bias evaluation
-
-## 📖 References
-
-- [Jigsaw Toxic Comment Classification Challenge](https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge)
-- [BERT: Pre-training of Deep Bidirectional Transformers](https://arxiv.org/abs/1810.04805)
-- [Language Models are Unsupervised Multitask Learners](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf)
-- [Bias in AI Systems](https://www.nature.com/articles/s41586-019-1484-9)
-- [Fairness in Machine Learning](https://fairmlbook.org/)
-- [Toxic Comment Classification](https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge/data)
-
-## 📄 License
-
-This project is for educational and research purposes. Please ensure compliance with competition rules and dataset usage policies.
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This solution addresses critical challenges in automated content moderation by implementing bias-aware training and evaluation methods. The codebase has been refactored for clarity, maintainability, and reproducibility, making it suitable for portfolio demonstration and further research in fair AI and content moderation applications.
+- I would archive out-of-fold predictions, exact environment versions, and the
+  final blend alongside every competition run so the reported result is auditable.
+- I would compare weight-stratified folds with splits that explicitly balance
+  identity/target combinations and account for repeated comments.
+- I would examine missing identity annotations separately and compare the retained
+  weighting rule with alternatives using controlled ablations.
+- I would study checkpoint selection by the bias metric alongside validation loss;
+  auxiliary training loss is not a substitute for the competition objective.

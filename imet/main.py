@@ -3,7 +3,6 @@
 import argparse
 import sys
 import os
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -19,13 +18,13 @@ def main():
                        help='Pipeline step to execute')
     
     parser.add_argument('--model', type=str, default='resnext101',
-                       choices=['resnext50', 'resnext101'],
+                       choices=['resnext50', 'resnext101', 'resnext_tiny'],
                        help='Model architecture to use')
     
-    parser.add_argument('--data-path', type=str, default='../data',
+    parser.add_argument('--data-path', type=str, default='./data',
                        help='Path to data directory')
     
-    parser.add_argument('--output-path', type=str, default='../output',
+    parser.add_argument('--output-path', type=str, default='./output',
                        help='Path to output directory')
     
     parser.add_argument('--batch-size', type=int, default=20,
@@ -46,6 +45,9 @@ def main():
     parser.add_argument('--fold-idx', type=int, default=None,
                        help='Specific fold to train (if None, trains all folds)')
     
+    parser.add_argument('--pretrained', action=argparse.BooleanOptionalAction, default=True,
+                       help='Load ImageNet weights for training (disable for offline runs)')
+
     parser.add_argument('--freeze-backbone', action='store_true',
                        help='Freeze backbone during initial training')
     
@@ -63,8 +65,11 @@ def main():
     
     args = parser.parse_args()
     
-    config = Config()
-    config.update_from_args(args)
+    config_args = vars(args).copy()
+    config_args.pop('step')
+    for alias, name in {'model': 'model_name', 'lr': 'learning_rate', 'folds': 'num_folds'}.items():
+        config_args[name] = config_args.pop(alias)
+    config = Config(**config_args)
     
     pipeline = IMetPipeline(config)
     

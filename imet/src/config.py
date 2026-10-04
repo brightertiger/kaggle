@@ -1,13 +1,13 @@
 import os
 import torch
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Optional, List, Dict, Any
 
 
 @dataclass
 class Config:
-    data_path: str = '../data'
-    output_path: str = '../output'
+    data_path: str = './data'
+    output_path: str = './output'
     model_name: str = 'resnext101'
     batch_size: int = 20
     epochs: int = 20
@@ -16,6 +16,7 @@ class Config:
     num_folds: int = 10
     fold_idx: Optional[int] = None
     freeze_backbone: bool = False
+    pretrained: bool = True
     device: str = 'auto'
     num_workers: int = 6
     patience: int = 5
@@ -48,12 +49,23 @@ class Config:
     min_threshold: float = 0.2
     
     def __post_init__(self):
+        if self.num_folds < 2:
+            raise ValueError('num_folds must be at least 2')
+        if self.fold_idx is not None and not 1 <= self.fold_idx <= self.num_folds:
+            raise ValueError('fold_idx must be between 1 and num_folds')
+        if min(self.batch_size, self.epochs, self.image_size, self.num_classes, self.top_k, self.patience) < 1:
+            raise ValueError('Batch size, epochs, image size, classes, top_k and patience must be positive')
+        if not 0 <= self.epsilon < 0.5:
+            raise ValueError('epsilon must be in [0, 0.5)')
+        if not self.thresholds or self.learning_rate <= 0 or self.num_workers < 0:
+            raise ValueError('Invalid thresholds, learning rate or worker count')
         self._setup_paths()
         self._setup_device()
         self._setup_directories()
     
     def _setup_paths(self):
-        self.train_csv_path = os.path.join(self.data_path, 'train.csv.zip')
+        plain_csv = os.path.join(self.data_path, 'train.csv')
+        self.train_csv_path = plain_csv if os.path.exists(plain_csv) else os.path.join(self.data_path, 'train.csv.zip')
         self.folds_csv_path = os.path.join(self.data_path, 'folds.csv')
         self.subset_csv_path = os.path.join(self.data_path, 'subset.csv')
         self.train_images_path = os.path.join(self.data_path, 'train')
@@ -79,9 +91,12 @@ class Config:
             os.makedirs(directory, exist_ok=True)
     
     def update_from_args(self, args):
+        aliases = {'model': 'model_name', 'lr': 'learning_rate', 'folds': 'num_folds'}
         for key, value in vars(args).items():
+            key = aliases.get(key, key)
             if hasattr(self, key) and value is not None:
                 setattr(self, key, value)
+        self.__post_init__()
     
     def get_model_path(self, fold: int, stage: str = 'stage_2') -> str:
         return os.path.join(self.model_dir, f'{self.model_name}_{stage}_{fold}.pt')
@@ -96,26 +111,7 @@ class Config:
         return os.path.join(self.logs_dir, f'training_fold_{fold}.log')
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            'data_path': self.data_path,
-            'output_path': self.output_path,
-            'model_name': self.model_name,
-            'batch_size': self.batch_size,
-            'epochs': self.epochs,
-            'learning_rate': self.learning_rate,
-            'image_size': self.image_size,
-            'num_folds': self.num_folds,
-            'fold_idx': self.fold_idx,
-            'freeze_backbone': self.freeze_backbone,
-            'device': self.device,
-            'num_workers': self.num_workers,
-            'patience': self.patience,
-            'seed': self.seed,
-            'num_classes': self.num_classes,
-            'epsilon': self.epsilon,
-            'focal_gamma': self.focal_gamma,
-            'f2_beta': self.f2_beta
-        }
+        return asdict(self)
     
     def __str__(self) -> str:
         config_str = "Configuration:\n"

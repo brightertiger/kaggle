@@ -1,8 +1,6 @@
-import torch
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from ..core.config import Config
 from ..data.preprocessing import SaltDataProcessor
@@ -12,9 +10,10 @@ from ..inference.predictor import ModelPredictor
 from ..inference.evaluator import ModelEvaluator
 
 class SaltSegmentationPipeline:
-    """Main pipeline for Salt Identification from Aerial Images"""
+    """Main pipeline for TGS Salt Identification Challenge"""
     
     def __init__(self, config: Config):
+        config.validate()
         self.config = config
         self.data_processor = SaltDataProcessor(config)
         self.predictor = ModelPredictor(config)

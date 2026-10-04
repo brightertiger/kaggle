@@ -1,10 +1,9 @@
 import pandas as pd
-import numpy as np
 import pickle
 import os
 import glob
 from sklearn.model_selection import StratifiedShuffleSplit
-from typing import Tuple, List
+from typing import Tuple
 
 from .config import Config
 from .trainer import ModelTrainer
@@ -32,28 +31,30 @@ class DoodlePipeline:
 
     def preprocess_data(self, 
                        source_path: str,
-                       train_ratio: float = 0.9,
-                       random_state: int = 2017) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        
-        categories = glob.glob(os.path.join(source_path, '*'))
-        categories = [os.path.basename(cat) for cat in categories]
-        
-        categories_path = os.path.join(self.config.data_path, 'categories.pkl')
-        with open(categories_path, 'wb') as f:
-            pickle.dump(categories, f)
-        
+                       train_ratio: float = None,
+                       random_state: int = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+
+        train_ratio = self.config.train_ratio if train_ratio is None else train_ratio
+        random_state = self.config.random_seed if random_state is None else random_state
+        if not 0 < train_ratio < 1:
+            raise ValueError('train_ratio must be between 0 and 1')
+        category_files = sorted(glob.glob(os.path.join(source_path, '*.csv')))
+        if not category_files:
+            raise ValueError(f'No category CSV files found in {source_path}')
+        frames = []
+        for category_file in category_files:
+            print(f"Processing {os.path.basename(category_file)}")
+            data = pd.read_csv(
+                category_file, usecols=['key_id', 'drawing', 'word'],
+                dtype={'key_id': str, 'word': str},
+                nrows=self.config.max_samples_per_class,
+            )
+            if data.empty or data.isna().any().any():
+                raise ValueError(f'Empty or missing required values in {category_file}')
+            frames.append(data)
+        full_data = pd.concat(frames, ignore_index=True)
+        categories = sorted(full_data['word'].unique().tolist())
         print(f"Found {len(categories)} categories")
-        
-        full_data = pd.DataFrame()
-        
-        for i, category in enumerate(categories):
-            print(f"Processing category {i+1}/{len(categories)}: {category}")
-            
-            category_file = os.path.join(source_path, category)
-            if os.path.isfile(category_file):
-                data = pd.read_csv(category_file)
-                data = data[['key_id', 'drawing', 'word']]
-                full_data = pd.concat([full_data, data], ignore_index=True)
         
         print(f"Total samples: {len(full_data)}")
         
@@ -73,6 +74,9 @@ class DoodlePipeline:
         
         train_data.to_csv(train_path, index=False)
         valid_data.to_csv(valid_path, index=False)
+        with open(os.path.join(self.config.data_path, 'categories.pkl'), 'wb') as f:
+            pickle.dump(categories, f)
+        self.config.num_classes = len(categories)
         
         print(f"Train samples: {len(train_data)}")
         print(f"Validation samples: {len(valid_data)}")
@@ -83,7 +87,7 @@ class DoodlePipeline:
                    train_df: pd.DataFrame,
                    valid_df: pd.DataFrame,
                    model_name: str = 'resnet50',
-                   learning_rate: float = 0.001) -> dict:
+                   learning_rate: float = None) -> dict:
         
         trainer = ModelTrainer(
             config=self.config,
@@ -115,7 +119,7 @@ class DoodlePipeline:
                          source_data_path: str,
                          test_data_path: str,
                          model_name: str = 'resnet50',
-                         learning_rate: float = 0.001) -> dict:
+                         learning_rate: float = None) -> dict:
         
         print("Starting full pipeline...")
         
@@ -123,7 +127,7 @@ class DoodlePipeline:
         
         train_results = self.train_model(train_df, valid_df, model_name, learning_rate)
         
-        test_df = pd.read_csv(test_data_path)
+        test_df = pd.read_csv(test_data_path, dtype={'key_id': str})
         model_path = os.path.join(
             self.config.model_path, 
             model_name, 
@@ -135,7 +139,7 @@ class DoodlePipeline:
             f'{model_name}_submission.csv'
         )
         
-        submission = self.generate_predictions(
+        self.generate_predictions(
             test_df, model_path, model_name, output_path
         )
         

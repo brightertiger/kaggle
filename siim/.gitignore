@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+sample_data/
+dry_run_output/
+data/
+models/
+scores/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

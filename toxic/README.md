@@ -1,304 +1,250 @@
-# Toxic Comment Classification
+# [Toxic Comment Classification Challenge](https://www.kaggle.com/competitions/jigsaw-toxic-comment-classification-challenge)
 
-A comprehensive machine learning pipeline for multi-label toxic comment classification using ensemble methods and deep learning approaches.
+**Final rank: #29 / 4,539 teams — Silver medal.**
 
-## 🎯 Project Overview
+I’m Ujjwal Singh Rao, a Kaggle Master. My approach combined recurrent text
+models with sparse lexical classifiers, then blended their probabilities.
+This folder is a runnable reconstruction of the components retained in this
+portfolio, with a small offline check of the complete training pipeline.
+The rank comes from the [portfolio table](../README.md); the synthetic run does
+not reproduce that result.
 
-This project tackles the challenge of identifying toxic comments across multiple categories: toxic, severe_toxic, obscene, threat, insult, and identity_hate. The solution employs a sophisticated ensemble approach combining neural networks, traditional ML models, and advanced text preprocessing techniques.
+## Problem
 
-### Key Features
+I predicted whether a Wikipedia discussion comment belonged to each of these
+six categories: `toxic`, `severe_toxic`, `obscene`, `threat`, `insult`, and
+`identity_hate`.
+A comment can have several positive labels, or none.
 
-- **Multi-label Classification**: Predicts 6 different types of toxicity simultaneously
-- **Ensemble Methods**: Combines multiple models for improved performance
-- **Advanced Text Preprocessing**: Multiple preprocessing strategies for robust feature extraction
-- **Deep Learning Models**: Bidirectional GRU networks with attention mechanisms
-- **Traditional ML Models**: Naive Bayes SVM and Logistic Regression with TF-IDF features
-- **Cross-validation**: Robust 10-fold cross-validation for reliable performance estimates
-- **Modular Architecture**: Clean, reusable code structure for easy experimentation
+The metric is the mean ROC AUC across the labels.
+That makes probability ordering important; moderation thresholds are separate.
 
-## 🏗️ Architecture
+The challenge was the variety of language: explicit abuse, misspellings,
+capitalization, repeated punctuation, and context-dependent meaning.
+Rare labels also make validation less stable than an aggregate score suggests.
 
-### Data Processing Pipeline
+## Data
 
-The pipeline implements multiple text preprocessing strategies:
+| File | Required columns | Role |
+| --- | --- | --- |
+| `train.csv` | `id`, `comment_text`, and the six binary targets | Training and validation |
+| `test.csv` | `id`, `comment_text` | Unlabeled comments to score |
+| `sample_submission.csv` | `id` and the six target columns | Competition submission template; not required by the loader |
 
-1. **Basic Cleaning**: URL/IP removal, whitespace normalization
-2. **Tokenized Processing**: Advanced tokenization with emoji/special character handling
-3. **NLTK Tokenization**: Linguistic tokenization with NLTK
-4. **Custom Preprocessing**: Domain-specific text transformations
+IDs are read as strings so leading zeros survive every intermediate CSV.
+Text length varies, and comments can contain URLs, IP addresses, user mentions,
+emoticons, and wiki-style punctuation.
+Labels are imbalanced and overlapping; the pipeline treats them as separate
+binary outcomes rather than mutually exclusive classes.
 
-### Model Architecture
+Missing text gets a placeholder during preprocessing; empty comments are also
+supported. Missing or nonbinary training labels are rejected.
+There are no competition data files or pretrained vectors bundled here.
 
-#### Neural Networks
-- **Architecture**: Bidirectional GRU with attention pooling
-- **Embeddings**: Pre-trained GloVe/FastText word vectors
-- **Features**: 
-  - Sequence length: 200 tokens
-  - Embedding size: 300 dimensions
-  - Hidden units: 50 GRU units
-  - Dense layers: 256 units with Swish activation
+## Approach
 
-#### Traditional ML Models
-- **Naive Bayes SVM**: TF-IDF features with NB-SVM algorithm
-- **Logistic Regression**: Combined word and character-level TF-IDF features
+### Validation
 
-#### Ensemble Methods
-- **Simple Averaging**: Equal weight combination of all models
-- **Weighted Averaging**: Performance-based model weighting
-- **Stacking**: Logistic regression meta-learner
+I use shuffled KFold splits over comment IDs, with `n_folds=10` and
+`random_state=2017` by default. Every preprocessing variant shares those splits.
+The retained implementation is ordinary KFold, not multilabel stratification.
 
-## 📊 Methodology
+Each training row receives one out-of-fold prediction from each model variant.
+I concatenate these held-out predictions and restore the original ID order.
+For test comments, I average predictions from the fold models.
+The final blend is evaluated only against the training labels through its OOF
+predictions; test rows never enter that evaluation.
 
-### Problem Formulation
+### Preprocessing and features
 
-The task is framed as a multi-label binary classification problem where each comment can be toxic in multiple ways simultaneously. This requires models that can capture complex relationships between different types of toxicity.
+I kept several views of the same text:
 
-### Data Preprocessing Strategy
+- **Basic clean:** remove URLs and IP addresses, strip punctuation, normalize spaces.
+- **Basic clean, lowercase:** apply the same cleaning and lower the text.
+- **Marker tokenization:** preserve signals such as all-caps words, emoticons,
+  hashtags, elongated words, repeated punctuation, and URLs as explicit tokens.
+- **NLTK tokenization:** retain token boundaries after light cleaning; use a
+  Treebank fallback if local Punkt resources are unavailable.
+- **Preprocessed:** pass supplied text through without additional cleaning.
 
-1. **Text Cleaning**: Remove URLs, IP addresses, normalize whitespace
-2. **Tokenization**: Advanced tokenization preserving semantic meaning
-3. **Feature Engineering**: Multiple preprocessing pipelines for model diversity
-4. **Cross-validation**: Stratified 10-fold CV maintaining class distribution
+The default neural run uses the first two configured views.
+The sparse models use the `preprocessed` view when available, otherwise the
+first configured view. Preparing all variants does not automatically train a
+model on each of them.
+The lowercasing neural tokenizer makes the two basic views equivalent; I would
+change the configured views before treating them as sources of model diversity.
 
-### Model Selection Rationale
+### Recurrent neural model
 
-- **Neural Networks**: Capture sequential patterns and semantic relationships
-- **Naive Bayes SVM**: Effective for text classification with sparse features
-- **Logistic Regression**: Robust baseline with interpretable features
-- **Ensemble**: Combines strengths of different approaches
+I use frozen GloVe or FastText embeddings with a bidirectional GRU architecture.
+The default input is padded or truncated to 200 tokens, with 300-dimensional
+vectors and a vocabulary cap of 30,000.
 
-### Evaluation Metrics
+Two parallel bidirectional GRU branches read the embeddings.
+One returns a sequence for max and average pooling; the other returns its final
+representation. I concatenate those features before the dense classifier.
+This retained model uses pooling rather than an attention layer.
+The broader portfolio lists CNN and attention work, but those architectures
+are not implemented in this folder.
 
-- **Primary Metric**: ROC AUC for each toxicity category
-- **Overall Score**: Mean AUC across all categories
-- **Cross-validation**: 10-fold CV for reliable performance estimates
+```mermaid
+flowchart TD
+    A[Comment CSVs] --> B[Shared ID folds and text views]
+    B --> C[Frozen embeddings]
+    C --> D[BiGRU sequence: max and average pooling]
+    C --> E[Parallel BiGRU: final representation]
+    D --> F[Concatenate, normalization, dense Swish, dropout]
+    E --> F
+    F --> G[Six sigmoid probabilities]
+    B --> H[Word TF-IDF and NB log-count ratios]
+    H --> I[Per-label logistic classifiers: NB-SVM]
+    B --> J[Word and character TF-IDF]
+    J --> K[Per-label logistic regression]
+    G --> L[OOF evaluation and separate test-fold averaging]
+    I --> L
+    K --> L
+    L --> M[Equal-weight probability blend and submission CSV]
+```
 
-## 🚀 Quick Start
+I train with binary cross-entropy and Adam, using spatial dropout, recurrent
+and ordinary dropout, and batch normalization.
+The default configuration uses 50 GRU units per direction, dense layers of
+256 units, a batch size of 256, and up to 12 epochs.
+Early stopping monitors validation loss and restores the best weights.
 
-### Installation
+### Sparse models
+
+**NB-SVM** starts with word unigram and bigram TF-IDF.
+For each label I calculate a smoothed positive/negative log-count ratio,
+reweight the sparse features, and fit a logistic classifier.
+The retained implementation uses logistic probabilities despite the NB-SVM name.
+
+**Logistic regression** combines word unigram TF-IDF with character n-grams
+of lengths 2–6. Character features provide another view of spelling variations
+and partial words. Defaults cap the word and character vocabularies at
+10,000 and 50,000 features respectively.
+
+The original feature-fitting scopes are preserved: the neural tokenizer sees
+fold training and validation text; the logistic TF-IDF vocabularies see train,
+validation, and test text. NB-SVM fits its vocabulary on fold training text.
+The former choices are transductive use of unlabeled text, so this is not a
+strictly inductive validation setup.
+
+### Blending and outputs
+
+I average the base-model probabilities with equal weights by default.
+Weighted blending and logistic stacking are also available as Python APIs.
+Stacking is not enabled in the default run, and its fitted training predictions
+must not be reported as an independent validation score.
+
+All blending matches comment IDs explicitly.
+A label with only one class in a training fold gets a constant sparse-model
+prediction. A single-class evaluation label has undefined AUC, reported as
+`NaN`; the overall score also remains undefined in that case.
+
+## What mattered most
+
+These are the main design choices in the retained solution. I do not have
+archived ablation runs here to attach measured gains to individual choices.
+
+- I combined sequence representations with lexical models so the blend could
+  capture both word order and direct token evidence.
+- I used character features alongside words to retain useful spelling fragments.
+- I kept alternative cleaning strategies because aggressive normalization can
+  remove expressive signals as well as noise.
+- I used shared folds and OOF probabilities to compare models on the same rows.
+- I treated rare labels separately and inspected per-label AUC rather than
+  relying only on the mean.
+
+## Repository layout
+
+```text
+toxic/
+├── README.md              # Solution narrative and execution guide
+├── main.py                # Train/predict, preprocess, and evaluate CLI
+├── dry_run.py             # Generate synthetic CSVs and run all model families
+├── example_usage.py       # Preprocessing, blending, and synthetic training examples
+├── requirements.txt       # Runtime dependencies
+├── setup.py               # Package metadata; uses the same dependency list
+├── .gitignore             # Excludes data, predictions, logs, and caches
+├── src/
+│   ├── __init__.py        # Package marker
+│   ├── config.py          # Dataclass defaults and JSON configuration loading
+│   ├── data_utils.py      # CSV validation, text cleaning, and fold file generation
+│   ├── models.py          # BiGRU, NB-SVM, and word/character logistic models
+│   ├── ensemble.py        # ID alignment, blending, stacking, and ROC AUC
+│   └── pipeline.py        # Fold training, prediction aggregation, and CSV outputs
+├── tests/test_pipeline.py # Regression checks for IDs, folds, and sparse classifiers
+├── sample_data/           # Generated train/test/template CSVs; ignored
+└── dry_run_output/        # Generated config, folds, predictions, and logs; ignored
+```
+
+## How to run
+
+Use Python 3.11; install dependencies from this folder:
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd toxic-comment-classification
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install package in development mode
-pip install -e .
+python -m pip install -r requirements.txt
 ```
 
-### Basic Usage
+### Real competition data
 
-```python
-from src.config import get_config
-from src.pipeline import ToxicCommentPipeline
-
-# Load configuration
-config = get_config()
-
-# Create pipeline
-pipeline = ToxicCommentPipeline(config)
-
-# Run full training pipeline
-predictions, results = pipeline.run_full_pipeline()
+```text
+data/
+├── raw/
+│   ├── train.csv
+│   ├── test.csv
+│   └── sample_submission.csv
+└── embeddings/
+    ├── glove.840B.300d.txt
+    └── fasttext.txt                 # Optional alternative text-format vectors
 ```
-
-### Command Line Interface
 
 ```bash
-# Train models
-python main.py --mode train --data-path /path/to/data
-
-# Run example usage
-python example_usage.py
+python main.py --mode train --data-path data/raw --output-path submissions
+# Select FastText instead of the default GloVe vectors:
+python main.py --models neural --embeddings fasttext --embedding-path data/embeddings/fasttext.txt
+# Run the sparse models without loading embeddings or initializing TensorFlow:
+python main.py --models traditional --data-path data/raw
 ```
 
-## 📁 Project Structure
+`--cpu` disables TensorFlow GPU devices. `--config path/to/config.json` accepts
+`data`, `model`, and `evaluation` objects using the fields in `src/config.py`.
+CLI path options override the corresponding JSON values.
+No weights or datasets are downloaded automatically.
 
-```
-toxic-comment-classification/
-├── src/                          # Source code
-│   ├── __init__.py
-│   ├── config.py                 # Configuration management
-│   ├── data_utils.py             # Data processing utilities
-│   ├── models.py                 # Model architectures
-│   ├── ensemble.py               # Ensemble methods
-│   └── pipeline.py               # Main pipeline
-├── data/                         # Data directory
-│   ├── raw/                      # Raw data files
-│   ├── processed/                # Processed data
-│   └── embeddings/               # Pre-trained embeddings
-├── models/                       # Trained models
-├── logs/                         # Training logs
-├── submissions/                  # Prediction outputs
-├── main.py                       # Main entry point
-├── example_usage.py              # Usage examples
-├── setup.py                      # Package setup
-├── requirements.txt              # Dependencies
-└── README.md                     # This file
+Training writes `models/*_validation.csv`, `logs/evaluation.csv`, and
+`submissions/*_submission.csv`, including `final_ensemble_submission.csv`.
+`--model-path` controls the OOF directory; `--output-path` controls submissions.
+These are prediction artifacts, not saved model checkpoints.
+The training command includes test prediction; standalone checkpoint inference
+is not exposed by this reconstruction.
+
+```bash
+python main.py --mode preprocess --data-path data/raw
+python main.py --mode evaluate --data-path data/raw --model-path models
 ```
 
-## 🔧 Configuration
-
-The project uses a flexible configuration system in `src/config.py`:
-
-```python
-@dataclass
-class Config:
-    data: DataConfig        # Data processing settings
-    model: ModelConfig      # Model hyperparameters
-    evaluation: EvaluationConfig  # Evaluation settings
+### Offline dry run
+```bash
+python dry_run.py
+python -m unittest discover -s tests -v
+python -m compileall -q .
 ```
 
-Key configuration options:
-- **Data paths**: Training/test data locations
-- **Model parameters**: Architecture, training settings
-- **Preprocessing methods**: Text cleaning strategies
-- **Cross-validation**: Number of folds, random seed
+The dry run generates 64 training comments and 8 test comments, exercises all
+preprocessing variants, and trains the neural and sparse models across two folds.
+It uses a tiny random embedding matrix and one neural epoch on CPU, with no
+pretrained downloads. It checks output IDs, column order, finite probabilities,
+and the written submission. No pipeline stage is skipped.
+Results are under `dry_run_output/`; this checks execution, not leaderboard
+performance. `python example_usage.py` also runs these examples.
 
-## 📈 Results
+## Lessons / what I'd do differently
 
-### Model Performance
-
-| Model | Toxic | Severe Toxic | Obscene | Threat | Insult | Identity Hate | Overall |
-|-------|-------|--------------|---------|--------|--------|---------------|---------|
-| Neural Network (GloVe) | 0.9845 | 0.9876 | 0.9843 | 0.9856 | 0.9823 | 0.9765 | 0.9835 |
-| Neural Network (FastText) | 0.9834 | 0.9865 | 0.9832 | 0.9845 | 0.9812 | 0.9754 | 0.9824 |
-| Naive Bayes SVM | 0.9756 | 0.9789 | 0.9765 | 0.9778 | 0.9745 | 0.9689 | 0.9754 |
-| Logistic Regression | 0.9734 | 0.9765 | 0.9743 | 0.9756 | 0.9723 | 0.9667 | 0.9731 |
-| **Final Ensemble** | **0.9856** | **0.9887** | **0.9854** | **0.9867** | **0.9834** | **0.9776** | **0.9846** |
-
-### Key Insights
-
-1. **Ensemble Superiority**: The final ensemble model outperforms individual models by 0.1-0.2% AUC
-2. **Neural Network Dominance**: Deep learning models consistently outperform traditional ML approaches
-3. **Preprocessing Impact**: Different preprocessing methods provide complementary information
-4. **Category Differences**: Identity hate is the most challenging category, while severe toxic shows highest performance
-
-## 🧪 Experimental Design
-
-### Data Analysis
-
-- **Training Set**: ~160k comments with multi-label annotations
-- **Test Set**: ~150k comments for final evaluation
-- **Class Distribution**: Highly imbalanced with <10% positive examples per category
-- **Text Characteristics**: Average length ~50 words, high variability in writing style
-
-### Hyperparameter Optimization
-
-- **Neural Networks**: Grid search over learning rates, dropout rates, architecture
-- **Traditional ML**: Cross-validation for regularization parameters
-- **Ensemble Weights**: Validation-based optimization
-
-### Ablation Studies
-
-1. **Preprocessing Impact**: Each preprocessing method contributes ~0.05% to final performance
-2. **Model Diversity**: Including diverse models improves ensemble robustness
-3. **Cross-validation**: 10-fold CV provides stable performance estimates
-
-## 🔬 Technical Details
-
-### Neural Network Architecture
-
-```python
-# Model architecture
-Input(sequence_length=200)
-├── Embedding(vocab_size, 300, pretrained_weights)
-├── SpatialDropout1D(0.2)
-├── Bidirectional(GRU(50, return_sequences=True))
-│   ├── GlobalMaxPooling1D()
-│   └── GlobalAveragePooling1D()
-├── Bidirectional(GRU(50, return_sequences=False))
-├── Concatenate([max_pool, avg_pool, lstm_output])
-├── BatchNormalization()
-├── Dense(256, activation='swish')
-├── Dropout(0.2)
-├── Dense(256, activation='swish')
-├── Dropout(0.2)
-└── Dense(6, activation='sigmoid')
-```
-
-### Feature Engineering
-
-- **Word-level TF-IDF**: 1-2 grams, 10k features
-- **Character-level TF-IDF**: 2-6 grams, 50k features
-- **Pre-trained Embeddings**: GloVe 840B, FastText vectors
-
-### Training Strategy
-
-- **Optimizer**: Adam with learning rate 1e-3
-- **Batch Size**: 256 for neural networks
-- **Epochs**: 12 with early stopping
-- **Regularization**: Dropout, batch normalization, weight decay
-
-## 🎯 Business Impact
-
-### Applications
-
-1. **Content Moderation**: Automatically flag toxic content for review
-2. **Community Management**: Maintain healthy online discussions
-3. **Research**: Study patterns in online toxicity
-4. **Policy Making**: Inform platform policies and guidelines
-
-### Performance Requirements
-
-- **Latency**: <100ms per comment for real-time applications
-- **Throughput**: Process 10k+ comments per second
-- **Accuracy**: >98% AUC for reliable content moderation
-- **Scalability**: Handle millions of comments daily
-
-## 🚀 Future Improvements
-
-### Model Enhancements
-
-1. **Transformer Models**: Implement BERT/RoBERTa for state-of-the-art performance
-2. **Multilingual Support**: Extend to non-English languages
-3. **Real-time Learning**: Online learning for adapting to new toxicity patterns
-4. **Interpretability**: Add model explanation capabilities
-
-### Engineering Improvements
-
-1. **Distributed Training**: Scale to larger datasets
-2. **Model Serving**: Production-ready inference pipeline
-3. **A/B Testing**: Framework for model comparison
-4. **Monitoring**: Real-time performance tracking
-
-## 📚 References
-
-1. **Kaggle Competition**: [Toxic Comment Classification Challenge](https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge)
-2. **Paper**: "Detecting Toxic Comments Using Machine Learning" - Jigsaw/Conversation AI
-3. **Embeddings**: GloVe, FastText pre-trained vectors
-4. **Framework**: Keras/TensorFlow for neural networks, scikit-learn for traditional ML
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contributing guidelines:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- Jigsaw/Conversation AI for the competition and dataset
-- Kaggle community for insights and discussions
-- Open source contributors for tools and libraries
-- Academic researchers for foundational work in NLP
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This project was developed as part of a data science competition and is intended for educational and research purposes. The models and approaches demonstrated here represent advanced techniques in natural language processing and machine learning.
+- I would retain fold assignments, OOF files, and experiment manifests alongside
+  each competition result so the final blend and its provenance are auditable.
+- I would compare multilabel-stratified folds with the retained KFold scheme,
+  especially for rare targets, before trusting small changes in mean AUC.
+- I would evaluate an inductive vocabulary-fitting setup separately from the
+  transductive one and examine false positives on quoted or contextual language.

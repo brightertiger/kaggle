@@ -1,233 +1,138 @@
+"""Cross-validation training and fold-averaged GAP predictions."""
 import os
+import random
+import warnings
+import numpy as np
 import pandas as pd
 import torch
-import numpy as np
-from typing import Tuple, Dict, Any
-from pytorch_pretrained_bert import BertTokenizer
-import torch.nn.functional as F
-from tqdm import tqdm
+from transformers import BertConfig, BertTokenizer
 
 from .config import Config
 from .models import PronounResolutionModel
-from .data_utils import PronounDataset, create_data_loaders
+from .data_utils import PronounDataset, create_data_loaders, collate_fn, load_and_process_data, read_gap
 from .trainer import PronounTrainer
 from .optimizer import AdaBound, CosineLR
 from .feature_engineering import FeatureExtractor
 
+
 class PronounResolutionPipeline:
-    def __init__(self, config: Config, device: str):
+    def __init__(self, config: Config, device: str = None):
         self.config = config
-        self.device = torch.device(device)
-        self.feature_extractor = FeatureExtractor()
-        self.tokenizer = self._setup_tokenizer()
-        
-    def _setup_tokenizer(self) -> BertTokenizer:
-        params = {
-            'pretrained_model_name_or_path': self.config.model.pretrained_model,
-            'do_lower_case': True,
-            'never_split': ("[UNK]", "[SEP]", "[PAD]", "[CLS]", "[MASK]", "[A]", "[B]", "[P]")
-        }
-        tokenizer = BertTokenizer.from_pretrained(**params)
-        tokenizer.vocab["[A]"] = -1
-        tokenizer.vocab["[B]"] = -1
-        tokenizer.vocab["[P]"] = -1
-        return tokenizer
-    
-    def prepare_data(self, train_path: str, val_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        train_data = pd.read_csv(train_path, sep='\t')
-        val_data = pd.read_csv(val_path, sep='\t')
-        
-        combined_data = pd.concat([train_data, val_data], ignore_index=True)
-        combined_data['fold'] = combined_data.index.map(lambda x: (x % 5) + 1)
-        
-        combined_data = self.feature_extractor.extract_basic_features(combined_data)
-        combined_data = self.feature_extractor.extract_linguistic_features(combined_data)
-        
-        return combined_data[combined_data['fold'] != 1], combined_data[combined_data['fold'] == 1]
-    
-    def _add_tags_to_text(self, data: pd.DataFrame) -> pd.DataFrame:
-        def replace_name_with_tag(text, name, offset, tag):
-            before_text = text[:offset - 20]
-            after_text = text[offset + 20:]
-            replace_text = text[offset - 20:offset + 20]
-            replace_text = replace_text.replace(name, tag)
-            return before_text + replace_text + after_text
-        
-        data = data.copy()
-        data['Text'] = data[['Text', 'A', 'A-offset']].apply(
-            lambda x: replace_name_with_tag(*x, ' [A] '), axis=1)
-        data['Text'] = data[['Text', 'B', 'B-offset']].apply(
-            lambda x: replace_name_with_tag(*x, ' [B] '), axis=1)
-        data['Text'] = data[['Text', 'Pronoun', 'Pronoun-offset']].apply(
-            lambda x: replace_name_with_tag(*x, ' [P] '), axis=1)
-        
-        return data
-    
-    def _create_labels(self, data: pd.DataFrame) -> pd.DataFrame:
-        def create_label(row):
-            if row['A-coref'] == 1:
-                return 0
-            elif row['B-coref'] == 1:
-                return 1
-            else:
-                return 2
-        
-        labels = data.apply(create_label, axis=1)
-        return pd.DataFrame({'Label': labels})
-    
+        requested = device or config.device
+        if requested.startswith('cuda') and not torch.cuda.is_available():
+            warnings.warn('CUDA unavailable; using CPU', stacklevel=2)
+            requested = 'cpu'
+        self.device = torch.device(requested)
+        random.seed(config.seed)
+        np.random.seed(config.seed)
+        torch.manual_seed(config.seed)
+        self.feature_extractor = FeatureExtractor(config.data.spacy_model)
+        self.tokenizer = BertTokenizer.from_pretrained(
+            config.model.pretrained_model, do_lower_case=True,
+            local_files_only=config.model.random_init)
+        if self.tokenizer.pad_token_id != 0:
+            raise ValueError('This BERT pipeline expects padding token ID 0')
+
+    def _new_model(self):
+        cfg = self.config.model
+        bert_config = None
+        if cfg.random_init:
+            bert_config = BertConfig(
+                vocab_size=len(self.tokenizer), hidden_size=cfg.hidden_size,
+                num_hidden_layers=cfg.num_hidden_layers,
+                num_attention_heads=cfg.num_attention_heads,
+                intermediate_size=cfg.intermediate_size,
+                max_position_embeddings=cfg.max_length,
+                hidden_dropout_prob=cfg.dropout, attention_probs_dropout_prob=cfg.dropout)
+        model = PronounResolutionModel(cfg.pretrained_model, cfg.hidden_size, cfg.dropout,
+                                       bert_config=bert_config, freeze_layers=cfg.freeze_layers)
+        if cfg.max_length > model.bert_encoder.bert.config.max_position_embeddings:
+            raise ValueError('max_length exceeds the BERT positional embedding limit')
+        return model.to(self.device)
+
+    def _features(self, data):
+        data = self.feature_extractor.extract_basic_features(data)
+        return self.feature_extractor.extract_linguistic_features(data)
+
+    def prepare_data(self, train_path, val_path):
+        train_data, val_data = load_and_process_data(train_path, val_path)
+        combined = pd.concat([train_data, val_data], ignore_index=True)
+        if combined['ID'].duplicated().any():
+            raise ValueError('Training source files contain overlapping IDs')
+        if len(combined) < self.config.data.n_folds:
+            raise ValueError('There must be at least one example per fold')
+        # Preserve the row-modulo split used by the migrated solution.
+        combined['fold'] = np.arange(len(combined)) % self.config.data.n_folds + 1
+        return self._features(combined)
+
+    def _add_tags_to_text(self, data):
+        def tag(row):
+            text = row['Text']
+            markers = [(int(row[f'{name}-offset']), marker)
+                       for name, marker in [('A', '[A]'), ('B', '[B]'), ('Pronoun', '[P]')]]
+            # Insert from right to left: offsets stay tied to the untouched text.
+            for offset, marker in sorted(markers, reverse=True):
+                text = text[:offset] + f' {marker} ' + text[offset:]
+            return text
+        result = data.copy()
+        result['Text'] = result.apply(tag, axis=1)
+        return result
+
+    def _create_labels(self, data):
+        return pd.DataFrame({'Label': np.where(data['A-coref'], 0, np.where(data['B-coref'], 1, 2))},
+                            index=data.index)
+
+    def _dataset(self, data, labeled=False):
+        columns = lambda candidate: [f'dist_{candidate}'] + [f'{candidate}_{suffix}' for suffix in
+                                                           ('url', 'cc', 'par', 'th', 'loc', 'cloc')]
+        return PronounDataset(
+            self._add_tags_to_text(data)[['Text']],
+            (data[columns('a')], data[columns('b')]),
+            self._create_labels(data) if labeled else None,
+            self.tokenizer, max_length=self.config.model.max_length)
+
     def train(self):
-        train_data, val_data = self.prepare_data(
-            self.config.data.train_path, 
-            self.config.data.val_path
-        )
-        
+        combined = self.prepare_data(self.config.data.train_path, self.config.data.val_path)
+        histories = {}
         for fold in range(1, self.config.data.n_folds + 1):
-            print(f"Training fold {fold}")
-            
-            fold_train = train_data[train_data['fold'] != fold]
-            fold_val = train_data[train_data['fold'] == fold]
-            
-            self._train_fold(fold_train, fold_val, fold)
-    
-    def _train_fold(self, train_data: pd.DataFrame, val_data: pd.DataFrame, fold: int):
-        train_data_tagged = self._add_tags_to_text(train_data)
-        val_data_tagged = self._add_tags_to_text(val_data)
-        
-        train_labels = self._create_labels(train_data)
-        val_labels = self._create_labels(val_data)
-        
-        feature_columns_a = ['dist_a', 'a_url', 'a_cc', 'a_par', 'a_th', 'a_loc', 'a_cloc']
-        feature_columns_b = ['dist_b', 'b_url', 'b_cc', 'b_par', 'b_th', 'b_loc', 'b_cloc']
-        
-        train_features = (train_data[feature_columns_a], train_data[feature_columns_b])
-        val_features = (val_data[feature_columns_a], val_data[feature_columns_b])
-        
-        train_dataset = PronounDataset(
-            train_data_tagged[['Text']], 
-            train_features, 
-            train_labels, 
-            self.tokenizer
-        )
-        
-        val_dataset = PronounDataset(
-            val_data_tagged[['Text']], 
-            val_features, 
-            val_labels, 
-            self.tokenizer
-        )
-        
-        train_loader, val_loader = create_data_loaders(
-            train_dataset, 
-            val_dataset, 
-            self.config.model.batch_size
-        )
-        
-        model = PronounResolutionModel(
-            self.config.model.pretrained_model,
-            self.config.model.hidden_size,
-            self.config.model.dropout
-        )
-        
-        optimizer = AdaBound(
-            model.parameters(),
-            lr=self.config.model.learning_rate,
-            weight_decay=self.config.model.weight_decay
-        )
-        
-        scheduler = CosineLR(
-            optimizer,
-            T_max=100,
-            T_mult=0.9,
-            eta_min=1e-4
-        )
-        
-        trainer = PronounTrainer(
-            model=model,
-            device=self.device,
-            optimizer=optimizer,
-            scheduler=scheduler
-        )
-        
-        save_dir = os.path.join(self.config.data.output_dir, f'fold_{fold}')
-        os.makedirs(save_dir, exist_ok=True)
-        
-        history = trainer.train(
-            train_loader=train_loader,
-            val_loader=val_loader,
-            epochs=self.config.model.epochs,
-            save_dir=save_dir
-        )
-        
-        print(f"Fold {fold} training completed. Best validation loss: {trainer.best_val_loss:.4f}")
-    
-    def predict(self, test_path: str = None):
-        if test_path is None:
-            test_path = self.config.data.test_path
-        
-        test_data = pd.read_csv(test_path, sep='\t')
-        test_data = self.feature_extractor.extract_basic_features(test_data)
-        test_data = self.feature_extractor.extract_linguistic_features(test_data)
-        
+            print(f'Training fold {fold}')
+            histories[fold] = self._train_fold(combined[combined['fold'] != fold],
+                                               combined[combined['fold'] == fold], fold)
+        return histories
+
+    def _train_fold(self, train_data, val_data, fold):
+        loaders = create_data_loaders(self._dataset(train_data, True), self._dataset(val_data, True),
+                                      self.config.model.batch_size, self.config.data.num_workers)
+        model = self._new_model()
+        optimizer = AdaBound(model.parameters(), lr=self.config.model.learning_rate,
+                             weight_decay=self.config.model.weight_decay)
+        scheduler = CosineLR(optimizer, T_max=100, T_mult=0.9, eta_min=1e-4)
+        trainer = PronounTrainer(model, self.device, optimizer, scheduler)
+        return trainer.train(*loaders, epochs=self.config.model.epochs,
+                             save_dir=os.path.join(self.config.data.output_dir, f'fold_{fold}'))
+
+    def predict(self, test_path=None):
+        data = self._features(read_gap(test_path or self.config.data.test_path))
+        loader = torch.utils.data.DataLoader(self._dataset(data),
+                    batch_size=self.config.model.batch_size, shuffle=False,
+                    collate_fn=collate_fn, num_workers=self.config.data.num_workers)
         predictions = []
-        
         for fold in range(1, self.config.data.n_folds + 1):
-            print(f"Predicting with fold {fold}")
-            
-            test_data_tagged = self._add_tags_to_text(test_data)
-            
-            feature_columns_a = ['dist_a', 'a_url', 'a_cc', 'a_par', 'a_th', 'a_loc', 'a_cloc']
-            feature_columns_b = ['dist_b', 'b_url', 'b_cc', 'b_par', 'b_th', 'b_loc', 'b_cloc']
-            
-            test_features = (test_data[feature_columns_a], test_data[feature_columns_b])
-            
-            test_dataset = PronounDataset(
-                test_data_tagged[['Text']], 
-                test_features, 
-                None, 
-                self.tokenizer
-            )
-            
-            test_loader = torch.utils.data.DataLoader(
-                test_dataset,
-                batch_size=50,
-                shuffle=False,
-                collate_fn=lambda x: self._collate_fn(x),
-                num_workers=1,
-                pin_memory=True,
-                drop_last=False
-            )
-            
-            model = PronounResolutionModel(
-                self.config.model.pretrained_model,
-                self.config.model.hidden_size,
-                self.config.model.dropout
-            )
-            
-            checkpoint_path = os.path.join(self.config.data.output_dir, f'fold_{fold}', 'best_model.pth')
-            model.load_state_dict(torch.load(checkpoint_path, map_location=self.device)['model_state_dict'])
-            model.to(self.device)
+            print(f'Predicting with fold {fold}')
+            model = self._new_model()
+            path = os.path.join(self.config.data.output_dir, f'fold_{fold}', 'best_model.pth')
+            checkpoint = torch.load(path, map_location=self.device, weights_only=True)
+            model.load_state_dict(checkpoint['model_state_dict'])
             model.eval()
-            
             fold_predictions = []
             with torch.no_grad():
-                for batch in tqdm(test_loader, desc=f"Fold {fold}"):
+                for batch in loader:
                     tokens, offsets, feature_a, feature_b, _ = [x.to(self.device) for x in batch]
-                    outputs = F.softmax(model(tokens, offsets, feature_a, feature_b), dim=1)
-                    fold_predictions.append(outputs.cpu().numpy())
-            
+                    fold_predictions.append(model(tokens, offsets, feature_a, feature_b).softmax(1).cpu().numpy())
             predictions.append(np.vstack(fold_predictions))
-        
-        ensemble_predictions = np.mean(predictions, axis=0)
-        
-        submission = pd.DataFrame(ensemble_predictions, columns=['A', 'B', 'NEITHER'])
-        submission['ID'] = [f'development-{i+1}' for i in range(len(submission))]
-        
-        output_path = os.path.join(self.config.data.output_dir, 'submission.csv')
-        submission.to_csv(output_path, index=False)
-        print(f"Predictions saved to {output_path}")
-        
+        submission = pd.DataFrame(np.mean(predictions, axis=0), columns=['A', 'B', 'NEITHER'])
+        submission.insert(0, 'ID', data['ID'].to_numpy())
+        path = os.path.join(self.config.data.output_dir, 'submission.csv')
+        submission.to_csv(path, index=False)
+        print(f'Predictions saved to {path}')
         return submission
-    
-    def _collate_fn(self, batch):
-        from .data_utils import collate_fn
-        return collate_fn(batch)

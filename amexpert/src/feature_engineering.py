@@ -1,15 +1,6 @@
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import LabelEncoder
-from functools import reduce
-
-
-def encode_categorical_features(data, features):
-    """Encode categorical features using LabelEncoder."""
-    for feature in features:
-        encoder = LabelEncoder()
-        data[feature] = encoder.fit_transform(data[feature].fillna('none'))
-    return data
+from .data_preprocessing import clean_date_format, encode_categorical_features
 
 
 def create_customer_features(customer_demographics_path, transaction_path, item_path, driver_path, output_path):
@@ -18,10 +9,6 @@ def create_customer_features(customer_demographics_path, transaction_path, item_
     profile = encode_categorical_features(profile, ['age_range', 'marital_status', 'no_of_children', 'family_size'])
     
     tranx = pd.read_csv(transaction_path)
-    tranx['total_discount'] = tranx['other_discount'] + tranx['coupon_discount']
-    tranx['other_perc'] = -1. * tranx['other_discount'] / tranx['selling_price']
-    tranx['coupon_perc'] = -1. * tranx['coupon_discount'] / tranx['selling_price']
-    
     item = pd.read_csv(item_path)
     item = encode_categorical_features(item, ['brand_type', 'category'])
     
@@ -61,7 +48,7 @@ def create_customer_features(customer_demographics_path, transaction_path, item_
     feat_8 = feat_8.rename(columns={'selling_price': 'cust_sum_price'})
     features.append(feat_8)
     
-    for feat in features[1:]:
+    for feat in features:
         profile = profile.merge(feat, on='customer_id', how='outer')
     
     profile = profile.fillna(-1)
@@ -92,7 +79,7 @@ def create_coupon_features(coupon_mapping_path, item_path, driver_path, output_p
     coupon = coupon[['coupon_id', 'cnt_coup_item', 'cnt_coup_brand', 'cnt_coup_category', 'cnt_coup_brand_typ']]
     coupon = coupon.drop_duplicates(subset=['coupon_id'])
     
-    data = driver.merge(coupon, on='coupon_id').drop('coupon_id', axis=1)
+    data = driver.merge(coupon, on='coupon_id', how='left', validate='many_to_one').drop('coupon_id', axis=1)
     data.to_csv(output_path, index=False)
     return data
 
@@ -102,14 +89,14 @@ def create_campaign_features(campaign_path, driver_path, output_path):
     driver = pd.read_csv(driver_path)[['id', 'campaign_id']]
     campaign = pd.read_csv(campaign_path)
     
-    campaign['start_date'] = pd.to_datetime(campaign['start_date'])
-    campaign['end_date'] = pd.to_datetime(campaign['end_date'])
-    campaign.loc[campaign['start_date'] > campaign['end_date'], 'end_date'] = campaign['start_date'] + pd.DateOffset(90)
+    campaign['start_date'] = pd.to_datetime(campaign['start_date'].map(clean_date_format))
+    campaign['end_date'] = pd.to_datetime(campaign['end_date'].map(clean_date_format))
+    campaign.loc[campaign['start_date'] > campaign['end_date'], 'end_date'] = campaign['start_date'] + pd.DateOffset(days=90)
     
     campaign['campaign_duration'] = (campaign['end_date'] - campaign['start_date']).dt.days
     campaign['campaign_duration'] = campaign['campaign_duration'].fillna(90)
     
-    data = driver.merge(campaign[['campaign_id', 'campaign_duration']], on='campaign_id')
+    data = driver.merge(campaign[['campaign_id', 'campaign_duration']], on='campaign_id', how='left', validate='many_to_one')
     data = data.drop('campaign_id', axis=1)
     
     data.to_csv(output_path, index=False)
@@ -134,16 +121,19 @@ def create_coupon_spend_features(coupon_mapping_path, transaction_path, driver_p
     features.columns = ['coupon_id'] + [f'coup_{col[0]}_{col[1]}' for col in features.columns[1:]]
     features = features.fillna(0)
     
-    data = driver.merge(features, on='coupon_id').drop('coupon_id', axis=1)
+    data = driver.merge(features, on='coupon_id', how='left', validate='many_to_one').fillna(0).drop('coupon_id', axis=1)
     data.to_csv(output_path, index=False)
     return data
 
 
-def create_count_features(transaction_path, driver_path, output_path):
+def create_count_features(transaction_path, item_path, driver_path, output_path):
     """Create count-based features."""
     driver = pd.read_csv(driver_path)[['id', 'customer_id', 'coupon_id']]
     tranx = pd.read_csv(transaction_path)
     
+    item = pd.read_csv(item_path)[['item_id', 'brand', 'category']]
+    tranx = tranx.merge(item, on='item_id', how='left', validate='many_to_one')
+
     customer_counts = tranx.groupby('customer_id').agg({
         'item_id': 'nunique',
         'brand': 'nunique',
@@ -257,13 +247,16 @@ def create_similarity_features(transaction_path, coupon_mapping_path, item_path,
     cust_cat = tranx.groupby('customer_id')['category'].apply(list).reset_index().rename(columns={'category': 'cm_clist'})
     coup_cat = coupon.groupby('coupon_id')['category'].apply(list).reset_index().rename(columns={'category': 'cp_clist'})
     
-    driver = driver.merge(cust_item, on=['customer_id'])
-    driver = driver.merge(coup_item, on=['coupon_id'])
-    driver = driver.merge(cust_brand, on=['customer_id'])
-    driver = driver.merge(coup_brand, on=['coupon_id'])
-    driver = driver.merge(cust_cat, on=['customer_id'])
-    driver = driver.merge(coup_cat, on=['coupon_id'])
+    driver = driver.merge(cust_item, on=['customer_id'], how='left', validate='many_to_one')
+    driver = driver.merge(coup_item, on=['coupon_id'], how='left', validate='many_to_one')
+    driver = driver.merge(cust_brand, on=['customer_id'], how='left', validate='many_to_one')
+    driver = driver.merge(coup_brand, on=['coupon_id'], how='left', validate='many_to_one')
+    driver = driver.merge(cust_cat, on=['customer_id'], how='left', validate='many_to_one')
+    driver = driver.merge(coup_cat, on=['coupon_id'], how='left', validate='many_to_one')
     
+    for column in ['cm_ilist', 'cp_ilist', 'cm_blist', 'cp_blist', 'cm_clist', 'cp_clist']:
+        driver[column] = driver[column].map(lambda value: value if isinstance(value, list) else [])
+
     driver['over_1'] = driver[['cm_ilist', 'cp_ilist']].apply(lambda x: jaccard_similarity(*x), axis=1)
     driver['over_2'] = driver[['cm_blist', 'cp_blist']].apply(lambda x: jaccard_similarity(*x), axis=1)
     driver['over_3'] = driver[['cm_clist', 'cp_clist']].apply(lambda x: jaccard_similarity(*x), axis=1)
@@ -280,15 +273,19 @@ def create_time_features(transaction_path, coupon_mapping_path, campaign_path, d
     item = pd.read_csv(coupon_mapping_path)
     
     campaign = pd.read_csv(campaign_path)
-    campaign['start_date'] = pd.to_datetime(campaign['start_date'])
-    campaign['end_date'] = pd.to_datetime(campaign['end_date'])
-    campaign.loc[campaign['start_date'] > campaign['end_date'], 'end_date'] = campaign['start_date'] + pd.DateOffset(90)
+    campaign['start_date'] = pd.to_datetime(campaign['start_date'].map(clean_date_format))
+    campaign['end_date'] = pd.to_datetime(campaign['end_date'].map(clean_date_format))
+    campaign.loc[campaign['start_date'] > campaign['end_date'], 'end_date'] = campaign['start_date'] + pd.DateOffset(days=90)
     campaign = campaign[['campaign_id', 'start_date']]
     campaign = campaign.set_index('campaign_id')['start_date'].to_dict()
     
     tranx = pd.read_csv(transaction_path)
     tranx['date'] = pd.to_datetime(tranx['date'])
+    raw_tranx = tranx.copy()
     tranx = tranx.merge(item, on='item_id')
+    missing = set(driver['campaign_id']) - set(campaign)
+    if missing:
+        raise ValueError(f'Missing campaign dates for IDs: {sorted(missing)}')
     
     def summary(driver_subset, tranx_subset, campaign_id, date):
         sub_driver = driver_subset[driver_subset['campaign_id'] == campaign_id]
@@ -299,7 +296,8 @@ def create_time_features(transaction_path, coupon_mapping_path, campaign_path, d
         sub_cust_coup = sub_cust_coup.reset_index()
         sub_cust_coup.columns = ['customer_id', 'coupon_id'] + ['cust_coup_qty', 'cust_coup_prc', 'cust_coup_cdsc']
         
-        sub_cust = sub_tranx.groupby(['customer_id'])
+        # Customer totals must not duplicate purchases mapped to multiple coupons.
+        sub_cust = raw_tranx[raw_tranx['date'] < date].groupby(['customer_id'])
         sub_cust = sub_cust[['quantity', 'selling_price', 'coupon_discount']].sum()
         sub_cust = sub_cust.reset_index()
         sub_cust.columns = ['customer_id'] + ['cust_qty', 'cust_prc', 'cust_cdsc']
@@ -320,7 +318,7 @@ def create_time_features(transaction_path, coupon_mapping_path, campaign_path, d
     for camp, date in campaign.items():
         outputs.append(summary(driver, tranx, camp, date))
     
-    driver = reduce(lambda x, y: x.append(y), outputs)
+    driver = pd.concat(outputs, ignore_index=True)
     driver = driver.drop(['campaign_id', 'customer_id', 'coupon_id'], axis=1)
     
     driver.to_csv(output_path, index=False)

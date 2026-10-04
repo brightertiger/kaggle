@@ -1,347 +1,242 @@
-# Tweet Sentiment Analysis
+# [Tweet Sentiment Extraction](https://www.kaggle.com/competitions/tweet-sentiment-extraction)
 
-A sophisticated machine learning pipeline for tweet sentiment analysis using RoBERTa-based models with advanced cross-validation and ensemble techniques.
+**Final rank: #208 / 2,225 teams · Bronze medal**
 
-## 🎯 Project Overview
+I’m Ujjwal Singh Rao, a Kaggle Master. I approached this competition as
+sentiment-conditioned span extraction: find the words that explain a supplied
+sentiment, using RoBERTa to predict the beginning and end of the answer.
+The finish above is recorded in the [portfolio competition table](../README.md).
+This folder contains the repaired implementation and an offline CPU example.
 
-This project tackles the challenge of extracting sentiment-specific text spans from tweets. Given a tweet and its sentiment label (positive, negative, or neutral), the model identifies the specific portion of the text that best represents that sentiment. This is a complex task that requires understanding both the semantic meaning and the contextual relevance of text spans.
+## Problem
 
-### Key Features
+Given a tweet and a sentiment label, I needed to return the selected portion
+of the tweet that best supported that sentiment.
+The sentiment itself was an input, not the prediction target.
 
-- **Advanced Architecture**: RoBERTa-based transformer model with multi-layer feature fusion
-- **Cross-Validation**: Robust 10-fold stratified cross-validation for reliable performance estimates
-- **Ensemble Methods**: Model averaging across folds for improved generalization
-- **Custom Loss Functions**: Combined Cross-Entropy and Dice loss for optimal span prediction
-- **Token-Level Precision**: Byte-level BPE tokenization for accurate character-level span extraction
-- **Modular Design**: Clean, reusable code architecture for easy experimentation and deployment
+The competition metric was word-set Jaccard similarity: the intersection of
+predicted and annotated words divided by their union, after lowercasing.
+Extra words and missing words both hurt the result.
 
-## 🏗️ Architecture
+The difficult part was deciding exactly where a sentiment-bearing phrase began
+and ended. Short, informal text also makes punctuation, repeated spaces, and
+partial-word tokenization consequential for alignment.
 
-### Problem Formulation
+## Data
 
-The task is framed as a **span extraction problem** where:
-- **Input**: Tweet text + sentiment label (positive/negative/neutral)
-- **Output**: Start and end token indices of the sentiment-relevant text span
-- **Challenge**: Accurately identify which words/phrases best represent the given sentiment
+The pipeline consumes CSV files with these columns:
 
-### Model Architecture
+| File | Columns | Role |
+| --- | --- | --- |
+| `train.csv` | `textID`, `text`, `selected_text`, `sentiment` | Labeled tweets and answer spans |
+| `test.csv` | `textID`, `text`, `sentiment` | Unlabeled tweets to extract from |
+| `sample_submission.csv` | `textID`, `selected_text` | Competition submission schema |
 
-#### RoBERTa-Based Encoder
-- **Base Model**: Pre-trained RoBERTa transformer
-- **Feature Fusion**: Multi-layer hidden state averaging (last 4 layers)
-- **Output Heads**: Three separate heads for start position, end position, and auxiliary classification
-- **Regularization**: Dropout (0.5) and weight decay for robust training
+Sentiment is `positive`, `negative`, or `neutral`.
+The model receives a fixed-length token sequence; the default length is 200.
+Identifiers remain strings so leading zeros survive CSV loading.
 
-#### Tokenization Strategy
-- **Method**: Byte-level BPE tokenization
-- **Special Format**: `[CLS] sentiment [SEP] [SEP] tweet_text [SEP]`
-- **Max Length**: 200 tokens with padding/truncation
-- **Character Mapping**: Precise offset tracking for span extraction
+I normalize case and whitespace consistently before locating annotated spans.
+Rows without usable training text or annotations are excluded before fold creation.
+Test rows are retained, including empty text, to preserve submission alignment.
+An annotation that cannot be located raises an explicit error.
 
-### Loss Function Design
+The repository does not contain a verified class-count or leakage analysis.
+I use sentiment stratification to preserve each fold’s class proportions;
+I do not assume that the competition classes are balanced.
 
-The model uses a **composite loss function** combining:
+## Approach
 
-1. **Cross-Entropy Loss**: For start/end position prediction
-2. **Dice Loss**: For auxiliary token-level classification
-3. **Weighted Combination**: Balanced optimization of both objectives
+### Validation
 
-## 📊 Methodology
+I use shuffled, sentiment-stratified cross-validation with 10 folds and seed 2017.
+The preprocessing step writes a `subset` column to `data/processed/train.csv`.
+Each model trains on the other folds and is evaluated on its held-out fold.
 
-### Data Preprocessing Pipeline
+Training selects checkpoints by validation loss and reports held-out Jaccard
+separately. The final console score is the mean of the fold Jaccard scores.
+I have not reproduced the leaderboard result with the repaired code;
+synthetic scores only verify that the pipeline executes.
 
-1. **Text Cleaning**: Handle missing values and normalize whitespace
-2. **Sentiment Integration**: Embed sentiment label into input sequence
-3. **Tokenization**: Byte-level BPE with precise offset tracking
-4. **Span Alignment**: Map character-level spans to token-level indices
-5. **Cross-Validation**: Stratified 10-fold split maintaining sentiment distribution
+### Preprocessing and features
 
-### Training Strategy
+I use RoBERTa’s byte-level BPE vocabulary and merge rules.
+The sequence format is:
 
-- **Optimizer**: AdamW with differential weight decay
-- **Learning Rate**: 3e-5 with ReduceLROnPlateau scheduling
-- **Gradient Accumulation**: 8 steps for effective larger batch sizes
-- **Gradient Clipping**: Norm clipping at 1.0 for training stability
-- **Early Stopping**: Patience-based stopping to prevent overfitting
-
-### Evaluation Metrics
-
-- **Primary Metric**: Jaccard Similarity Score
-- **Calculation**: Intersection over Union of predicted and true text spans
-- **Range**: 0.0 (no overlap) to 1.0 (perfect match)
-- **Cross-Validation**: 10-fold CV for robust performance estimation
-
-## 🚀 Quick Start
-
-### Installation
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd tweet-sentiment-analysis
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install package in development mode
-pip install -e .
+```text
+<s> sentiment </s> </s> normalized_tweet </s> <pad> ...
 ```
 
-### Basic Usage
+Character offsets connect each tweet token to its span in normalized text.
+The annotation becomes a start-token and an end-token target.
+Sentiment can occupy multiple tokens, so offsets follow the actual prefix length.
+Padding and sentiment-prefix tokens are excluded from answer positions.
 
-```python
-from src.config import get_config
-from src.pipeline import TweetSentimentPipeline
+Long inputs are truncated to the configured length.
+If that would remove part of a training answer, training raises an error with
+the tweet ID so I can increase the length instead of training on a false label.
+The same encoding and offset logic is used for validation and test inference.
 
-# Load configuration
-config = get_config()
+### Model and objective
 
-# Create pipeline
-pipeline = TweetSentimentPipeline(config)
+I fine-tune a pretrained RoBERTa encoder, average its last four hidden states,
+apply dropout, and project each token to start, end, and auxiliary logits.
+The classifier is deliberately small; the encoder supplies contextual features.
 
-# Run full training pipeline
-results = pipeline.run_full_pipeline('data/raw/train.csv')
-print(f"Average Jaccard Score: {results['average_score']:.4f}")
+The default objective is the sum of start and end cross-entropy losses.
+The source retained an auxiliary Dice loss but did not add it to that objective.
+I preserve this behavior: `auxiliary_loss_weight` defaults to zero and can enable
+that experimental branch explicitly. I do not claim a measured Dice-loss gain.
+
+```mermaid
+flowchart TD
+    A[Training CSV] --> B[Clean rows and stratify by sentiment]
+    B --> C[BPE tokens, masks, offsets, and span targets]
+    C --> D[RoBERTa encoder]
+    D --> E[Average last four hidden states and apply dropout]
+    E --> F[Start, end, and auxiliary token logits]
+    F --> G[Cross-entropy training and fold checkpoints]
+    G --> H[Held-out Jaccard evaluation]
+    I[Test CSV with sentiment] --> J[Shared BPE encoding]
+    J --> K[Predict with each fold checkpoint]
+    G --> K
+    K --> L[Average and round boundary indices]
+    L --> M[Decode offsets and write submission.csv]
 ```
 
-### Command Line Interface
+### Training and inference
+
+I use AdamW with learning rate `3e-5`, weight decay `0.001`, and no decay on
+biases or LayerNorm weights. The default run uses five epochs, dropout `0.5`,
+and eight gradient-accumulation steps.
+Gradient clipping, ReduceLROnPlateau, and early stopping control training.
+The final partial accumulation window is also applied.
+
+CUDA mixed precision is optional; a machine without CUDA falls back to CPU.
+The CPU example uses the same encoder class and training loop with random
+initialization and a small configuration, without pretrained downloads.
+
+For inference I retain the migrated implementation’s simple ensemble:
+average the fold start/end indices independently, then round them.
+This is boundary-index averaging, not probability averaging.
+I decode the resulting span using the shared offsets; reversed or invalid
+boundaries fall back to the full normalized tweet.
+Empty tweets produce empty selections. There is no sentiment-specific override.
+
+## What mattered most
+
+These are the central choices in the implementation; the repository does not
+provide verified ablations that isolate their leaderboard contributions.
+
+- Conditioning extraction on sentiment makes the supplied label part of the context.
+- Character-to-token alignment keeps supervision and decoded answers consistent.
+- Averaging the last hidden states combines contextual representations before prediction.
+- Stratified held-out folds support validation and provide the models for ensembling.
+- Gradient accumulation permits small physical batches during encoder fine-tuning.
+
+## Repository layout
+
+```text
+tweet/
+├── README.md               # Solution, scope, and execution instructions
+├── main.py                 # Train/evaluate/predict CLI with JSON overrides
+├── dry_run.py              # Synthetic data, offline CLI run, and regression checks
+├── example_usage.py        # Entry point for the same working offline example
+├── requirements.txt        # Runtime dependencies
+├── setup.py                # Packaging metadata and console entry point
+├── .gitignore              # Excludes datasets, checkpoints, and generated outputs
+├── src/
+│   ├── __init__.py         # Package marker
+│   ├── config.py           # Dataclass defaults and JSON configuration loading
+│   ├── data_utils.py       # CSV validation, BPE offsets, span labels, and loaders
+│   ├── models.py           # RoBERTa feature fusion, token heads, and losses
+│   ├── trainer.py          # Optimization, validation, early stopping, checkpoints
+│   ├── evaluator.py        # Checkpoint inference, span decoding, and Jaccard
+│   └── pipeline.py         # Fold creation, training, evaluation, and ensemble
+├── notebook/
+│   ├── 00-subset.ipynb     # Empty legacy placeholder; no runnable notebook content
+│   ├── 01-train.ipynb      # Empty legacy placeholder
+│   ├── 02-score.ipynb      # Empty legacy placeholder
+│   └── 03-eval.ipynb       # Empty legacy placeholder
+├── sample_data/            # Generated synthetic CSVs and local BPE tokenizer
+└── dry_run_output/         # Generated config, processed folds, models, submission
+```
+
+## How to run
+
+### Real competition data
+
+Run commands from this folder with Python 3.11 and install the dependencies:
 
 ```bash
-# Train models with cross-validation
+python -m pip install -r requirements.txt
+```
+
+Download the competition CSVs yourself and supply matching pretrained RoBERTa
+assets. The default local layout is:
+
+```text
+data/raw/train.csv
+data/raw/test.csv
+data/raw/sample_submission.csv
+models/pretrain/vocab.json
+models/pretrain/merges.txt
+models/pretrain/config.json
+models/pretrain/model.safetensors  # or pytorch_model.bin
+```
+
+`models/pretrain/` is loaded as a Hugging Face model directory when its config
+exists. Otherwise, the encoder uses `model.model_name` (`roberta-base` by default),
+which may download weights. The local BPE files must match that encoder.
+Checkpoint inference reconstructs the encoder from saved configuration and weights.
+
+```bash
 python main.py --mode train --data-path data/raw/train.csv
-
-# Evaluate trained models
-python main.py --mode evaluate --data-path data/raw/train.csv
-
-# Generate predictions for test set
+python main.py --mode evaluate --data-path data/processed/train.csv
 python main.py --mode predict --test-path data/raw/test.csv --output-path submissions/
+```
 
-# Run example usage
+Training includes fold creation and held-out evaluation.
+Evaluation requires the processed CSV with `subset`, and prediction requires all
+fold checkpoints. Use the same tokenizer, sequence length, and fold settings.
+The prediction command writes `submissions/submission.csv`.
+
+Use `--config config.json` in every command to override nested `data`, `model`,
+and `training` settings. For example:
+
+```json
+{
+  "data": {"vocab_file": "models/pretrain/vocab.json", "merges_file": "models/pretrain/merges.txt"},
+  "model": {"model_name": "models/pretrain"},
+  "training": {"device": "cpu"}
+}
+```
+
+Paths in JSON are relative to the working directory; CLI paths override JSON.
+`--device cpu` is also available directly. Full encoder training is intended
+for an accelerator; the small example below is the practical CPU smoke test.
+
+### Offline dry run
+
+```bash
+python dry_run.py
+# Equivalent example entry point:
 python example_usage.py
 ```
 
-## 📁 Project Structure
+The script generates 12 labeled tweets and five test rows under `sample_data/`.
+It trains a local BPE tokenizer and a random-init RoBERTa with four layers and
+hidden size 32, runs two folds for one epoch each, reloads the checkpoints,
+evaluates, ensembles, and writes `dry_run_output/submission.csv`.
+Network access is disabled for Hugging Face calls. No pipeline stage is skipped.
 
-```
-tweet-sentiment-analysis/
-├── src/                          # Source code
-│   ├── __init__.py
-│   ├── config.py                 # Configuration management
-│   ├── data_utils.py             # Data processing and loaders
-│   ├── models.py                 # Model architectures and loss functions
-│   ├── trainer.py                # Training pipeline
-│   ├── evaluator.py              # Evaluation and scoring
-│   └── pipeline.py               # Main pipeline orchestration
-├── data/                         # Data directory
-│   ├── raw/                      # Raw data files
-│   └── processed/                # Processed data with folds
-├── models/                       # Trained models and checkpoints
-│   ├── pretrain/                 # Pre-trained RoBERTa weights
-│   └── checkpoints/              # Training checkpoints
-├── submissions/                  # Prediction outputs
-├── main.py                       # Main entry point
-├── example_usage.py              # Usage examples
-├── setup.py                      # Package setup
-├── requirements.txt              # Dependencies
-└── README.md                     # This file
-```
+Assertions check span alignment, auxiliary-label dimensions, checkpoint updates,
+long and empty inputs, leading-zero IDs, and submission order.
+Generated scores are smoke-test output, not competition performance estimates.
 
-## 🔧 Configuration
+## Lessons / what I’d do differently
 
-The project uses a flexible configuration system in `src/config.py`:
-
-```python
-@dataclass
-class Config:
-    data: DataConfig        # Data processing settings
-    model: ModelConfig      # Model hyperparameters
-    training: TrainingConfig  # Training settings
-```
-
-### Key Configuration Options
-
-- **Data Settings**: Paths, batch size, sequence length, number of folds
-- **Model Parameters**: Architecture, dropout, learning rate, training epochs
-- **Training Settings**: Device, mixed precision, early stopping, logging
-
-## 📈 Results
-
-### Model Performance
-
-| Metric | Score | Description |
-|--------|-------|-------------|
-| **Average Jaccard Score** | **0.7234** | Mean across 10-fold CV |
-| **Best Fold Score** | 0.7456 | Highest individual fold performance |
-| **Worst Fold Score** | 0.7012 | Lowest individual fold performance |
-| **Standard Deviation** | 0.0123 | Cross-validation stability |
-
-### Performance by Sentiment
-
-| Sentiment | Jaccard Score | Difficulty |
-|-----------|---------------|------------|
-| **Positive** | 0.7456 | Easiest - clear positive indicators |
-| **Negative** | 0.7234 | Moderate - varied negative expressions |
-| **Neutral** | 0.7012 | Hardest - subtle neutral markers |
-
-### Key Insights
-
-1. **Model Robustness**: Consistent performance across folds indicates stable training
-2. **Sentiment Bias**: Positive sentiment easiest to identify, neutral most challenging
-3. **Span Precision**: Model excels at identifying sentiment-specific phrases
-4. **Cross-Validation**: 10-fold CV provides reliable performance estimates
-
-## 🧪 Experimental Design
-
-### Data Analysis
-
-- **Training Set**: ~27,000 tweets with sentiment labels and selected text spans
-- **Class Distribution**: Balanced across positive, negative, and neutral sentiments
-- **Text Characteristics**: Average length ~15 words, high variability in expression
-- **Span Length**: Average selected text ~3-5 words, varies by sentiment
-
-### Hyperparameter Optimization
-
-- **Learning Rate**: Grid search over [1e-5, 3e-5, 5e-5] → 3e-5 optimal
-- **Dropout Rate**: Ablation study over [0.3, 0.5, 0.7] → 0.5 optimal
-- **Sequence Length**: Analysis of [150, 200, 250] → 200 optimal
-- **Batch Size**: Memory vs. performance trade-off → 4 optimal
-
-### Ablation Studies
-
-1. **Feature Fusion**: Multi-layer averaging improves performance by 2.3%
-2. **Loss Function**: Combined CE + Dice loss outperforms CE alone by 1.8%
-3. **Cross-Validation**: 10-fold CV provides more stable estimates than 5-fold
-4. **Ensemble**: Model averaging across folds improves final score by 1.2%
-
-## 🔬 Technical Details
-
-### Model Architecture Details
-
-```python
-# RoBERTa-based architecture
-Input: [CLS] sentiment [SEP] [SEP] tweet_text [SEP]
-├── RoBERTa Encoder (12 layers, 768 hidden size)
-├── Multi-layer Feature Fusion (layers -1, -2, -3, -4)
-├── Dropout (0.5)
-├── Classification Head (768 → 3)
-│   ├── Start Position Logits
-│   ├── End Position Logits
-│   └── Auxiliary Token Logits
-└── Output: (start_idx, end_idx, aux_logits)
-```
-
-### Training Dynamics
-
-- **Optimizer**: AdamW with β₁=0.9, β₂=0.999
-- **Weight Decay**: 0.001 for transformer weights, 0.0 for bias/LayerNorm
-- **Scheduler**: ReduceLROnPlateau with factor=0.1, patience=0
-- **Gradient Accumulation**: 8 steps for effective batch size of 32
-- **Mixed Precision**: Optional FP16 for memory efficiency
-
-### Inference Pipeline
-
-1. **Tokenization**: Convert text to BPE tokens with offsets
-2. **Model Forward**: Generate start/end logits and auxiliary predictions
-3. **Span Extraction**: Convert token indices back to character positions
-4. **Post-processing**: Handle edge cases and invalid spans
-5. **Ensemble**: Average predictions across multiple folds
-
-## 🎯 Business Applications
-
-### Use Cases
-
-1. **Social Media Monitoring**: Identify sentiment-specific content for brand analysis
-2. **Customer Feedback**: Extract key phrases from reviews and support tickets
-3. **Content Moderation**: Highlight problematic text segments for human review
-4. **Market Research**: Analyze sentiment trends in social media discussions
-5. **Product Development**: Identify specific features mentioned in user feedback
-
-### Performance Requirements
-
-- **Latency**: <50ms per tweet for real-time applications
-- **Throughput**: Process 1000+ tweets per second
-- **Accuracy**: >70% Jaccard score for reliable span extraction
-- **Scalability**: Handle millions of tweets daily
-
-## 🚀 Future Improvements
-
-### Model Enhancements
-
-1. **Advanced Architectures**: Implement BERT/RoBERTa variants with task-specific heads
-2. **Multi-task Learning**: Joint sentiment classification and span extraction
-3. **Attention Mechanisms**: Add cross-attention between sentiment and text
-4. **Contrastive Learning**: Improve span representation learning
-5. **Few-shot Learning**: Adapt to new sentiment categories with minimal data
-
-### Engineering Improvements
-
-1. **Distributed Training**: Scale to larger datasets with multiple GPUs
-2. **Model Serving**: Production-ready inference pipeline with caching
-3. **A/B Testing**: Framework for model comparison and deployment
-4. **Monitoring**: Real-time performance tracking and drift detection
-5. **Interpretability**: Add attention visualization and explanation tools
-
-### Data Improvements
-
-1. **Data Augmentation**: Synthetic data generation for rare sentiment patterns
-2. **Active Learning**: Intelligent sample selection for annotation
-3. **Multi-lingual Support**: Extend to non-English languages
-4. **Domain Adaptation**: Fine-tune for specific industries or use cases
-
-## 📚 References
-
-1. **Competition**: [Tweet Sentiment Extraction Challenge](https://www.kaggle.com/c/tweet-sentiment-extraction)
-2. **Paper**: "RoBERTa: A Robustly Optimized BERT Pretraining Approach" - Liu et al.
-3. **Framework**: PyTorch, Transformers library, Tokenizers
-4. **Evaluation**: Jaccard Similarity for span extraction tasks
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contributing guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Setup
-
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Format code
-black src/
-
-# Lint code
-flake8 src/
-
-# Type checking
-mypy src/
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Kaggle community for the competition and dataset
-- Hugging Face for the Transformers library
-- Facebook AI Research for RoBERTa
-- Open source contributors for tools and libraries
-- Academic researchers for foundational work in NLP
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This project was developed as part of a data science competition and is intended for educational and research purposes. The models and approaches demonstrated here represent advanced techniques in natural language processing and span extraction tasks.
+- I would compare probability-level ensembling with the retained boundary-index average.
+- I would select and analyze checkpoints by Jaccard as well as token cross-entropy.
+- I would preserve original training logs and ablations alongside the code so score claims are auditable.
+- I would make offset and unlabeled-inference checks part of every refactor; small data-contract errors can break the entire extraction pipeline.

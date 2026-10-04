@@ -1,8 +1,8 @@
+import os
 import numpy as np
 import pandas as pd
 from keras import backend as K
 from sklearn.metrics import log_loss
-from functools import reduce
 
 class ModelPredictor:
     def __init__(self, config):
@@ -10,15 +10,15 @@ class ModelPredictor:
         
     def predict_test_set(self, model_class, model_name, source_name):
         test_images = np.load(f'{self.config.DATA_DIR}/{source_name}/score/images.npy')
-        test_angles = np.load(f'{self.config.DATA_DIR}/{source_name}/score/angles.npy')
         test_ids = np.load(f'{self.config.DATA_DIR}/{source_name}/score/ids.npy')
-        test_generator = [test_images, test_angles]
         
         predictions = []
         for fold_idx in range(1, self.config.FOLDS + 1):
-            model = model_class.define_model()
-            model.load_weights(f'{self.config.MODEL_DIR}/{model_name}/model_{fold_idx}.hdf5')
-            pred = model.predict(test_generator)
+            test_angles = np.load(f'{self.config.DATA_DIR}/{source_name}/score/angles_{fold_idx}.npy').reshape(-1, 1)
+            test_generator = [test_images, test_angles]
+            model = model_class.define_model(pretrained=False, compile_model=False) if model_name == 'vgg16' else model_class.define_model(compile_model=False)
+            model.load_weights(f'{self.config.MODEL_DIR}/{model_name}/model_{fold_idx}.weights.h5')
+            pred = model.predict(test_generator, batch_size=self.config.BATCH_SIZE, verbose=0)
             predictions.append(pred[:, 0])
             K.clear_session()
         
@@ -39,14 +39,14 @@ class ModelPredictor:
         
         for fold_idx in range(1, self.config.FOLDS + 1):
             test_images = np.load(f'{self.config.DATA_DIR}/{source_name}/train/test_images_{fold_idx}.npy')
-            test_angles = np.load(f'{self.config.DATA_DIR}/{source_name}/train/test_angles_{fold_idx}.npy')
+            test_angles = np.load(f'{self.config.DATA_DIR}/{source_name}/train/test_angles_{fold_idx}.npy').reshape(-1, 1)
             test_ids = np.load(f'{self.config.DATA_DIR}/{source_name}/train/test_ids_{fold_idx}.npy')
             test_labels = np.load(f'{self.config.DATA_DIR}/{source_name}/train/test_labels_{fold_idx}.npy')
             test_generator = [test_images, test_angles]
             
-            model = model_class.define_model()
-            model.load_weights(f'{self.config.MODEL_DIR}/{model_name}/model_{fold_idx}.hdf5')
-            pred = model.predict(test_generator)[:, 0]
+            model = model_class.define_model(pretrained=False, compile_model=False) if model_name == 'vgg16' else model_class.define_model(compile_model=False)
+            model.load_weights(f'{self.config.MODEL_DIR}/{model_name}/model_{fold_idx}.weights.h5')
+            pred = model.predict(test_generator, batch_size=self.config.BATCH_SIZE, verbose=0)[:, 0]
             K.clear_session()
             
             cv_data = pd.DataFrame({
@@ -60,7 +60,7 @@ class ModelPredictor:
             
             cv_predictions.append(cv_data[['id', 'label', 'score']])
         
-        cv_results = reduce(lambda x, y: x.append(y), cv_predictions)
+        cv_results = pd.concat(cv_predictions, ignore_index=True)
         overall_loss = log_loss(cv_results['label'], cv_results['score'])
         print(f'Overall CV Log Loss: {overall_loss:.6f}')
         

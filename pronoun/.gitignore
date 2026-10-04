@@ -1,0 +1,10 @@
+sample_data/
+dry_run_output/
+outputs/
+data/
+__pycache__/
+*.py[cod]
+.uv-cache/
+*.egg-info/
+build/
+dist/

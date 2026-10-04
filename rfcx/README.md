@@ -1,270 +1,226 @@
-# RFCX Species Audio Detection
+# [Rainforest Connection Species Audio Detection](https://www.kaggle.com/competitions/rfcx-species-audio-detection)
 
-A deep learning solution for classifying rainforest audio recordings into 24 different species using convolutional neural networks on mel-spectrograms.
+**Final rank: 78 / 1,143 teams · Bronze medal**
 
-## 🎯 Project Overview
+I approached species detection as image classification over short audio windows:
+turn a call into a mel-spectrogram, learn its visual pattern, and scan each
+recording for evidence of each species. This folder preserves that CNN pipeline
+from my competition solution, with repairs for local execution on Python 3.11.
+The placement above comes from the portfolio record; the migrated code does not
+include the original checkpoints or a reproducible leaderboard score.
 
-This project tackles the **Rainforest Connection Species Audio Detection** challenge, where the goal is to identify different species from audio recordings collected in rainforest environments. The solution uses advanced deep learning techniques including:
+## Problem
 
-- **Audio Signal Processing**: Converting raw audio to mel-spectrograms
-- **Computer Vision**: Applying CNN architectures to spectrogram images
-- **Data Augmentation**: Mixup, audio augmentation, and image augmentation
-- **Ensemble Methods**: Multiple model architectures and test-time augmentation
-- **Cross-Validation**: Stratified k-fold validation for robust evaluation
+The task was to identify which bird and frog species were audible in each
+rainforest recording. Predictions were recording-level species scores; test
+submissions did not require event timestamps.
 
-## 🏗️ Architecture
+The competition metric was **label-weighted label-ranking average precision
+(LWLRAP)**: correct species should rank ahead of absent species, with each
+positive label contributing equally. Multiple species can be present together.
+See the [competition evaluation](https://www.kaggle.com/competitions/rfcx-species-audio-detection/overview).
 
-### Data Pipeline
-1. **Audio Preprocessing**: Resample audio to 32kHz and extract 5-second segments
-2. **Feature Extraction**: Convert audio to mel-spectrograms (300 mel bins)
-3. **Image Conversion**: Transform spectrograms to RGB images for CNN processing
-4. **Augmentation**: Apply mixup, audio noise, and image transformations
+The challenge was separating brief calls from background insects, overlapping
+sounds, and changing recording conditions. An entire recording can contain much
+more background than useful evidence for its annotated species.
 
-### Model Architecture
-- **Backbone**: ResNet50 variants (Res2Net50, ResNeSt50)
-- **Input**: 300x300 RGB spectrogram images
-- **Output**: 24-class species classification
-- **Loss Function**: Binary Cross-Entropy with Logits
+## Data
 
-### Training Strategy
-- **Cross-Validation**: 5-fold stratified validation
-- **Optimization**: Adam optimizer with ReduceLROnPlateau scheduler
-- **Regularization**: Dropout, data augmentation, early stopping
-- **Ensemble**: Multiple model predictions with ranking-based fusion
+I use the competition's FLAC recordings and event annotations:
 
-## 📁 Project Structure
+- `train_tp.csv`: `recording_id`, `species_id`, `songtype_id`, `t_min`, `f_min`,
+  `t_max`, and `f_max` for confirmed events.
+- `train_fp.csv`: false-positive annotations supplied with the competition;
+  this implementation does not consume them.
+- `train/` and `test/`: audio files named `<recording_id>.flac`.
+- `sample_submission.csv`: `recording_id` followed by `s0` through `s23`.
 
+The [official data description](https://www.kaggle.com/competitions/rfcx-species-audio-detection/data)
+explains the event schema. I retain its frequency and song-type fields when
+preparing folds, but this model uses species labels and event times.
+
+Audio is converted to mono and resampled to **32,000 Hz**. The default feature
+representation uses **300 mel bins**, with **5-second** windows converted to
+**300 × 300** images. The output contains **24 species** scores.
+
+Annotations are event-level, and a recording can contribute multiple rows.
+That makes recording identity a validation boundary. Species stratification
+helps balance labels, but grouped splits cannot guarantee identical class
+proportions. Treating other species as negative within an annotated crop is
+also an approximation when calls overlap.
+
+## Approach
+
+### Validation
+
+The migrated training loop uses **5 folds** and selects checkpoints by
+**top-1 accuracy on annotated crops**. I keep that selection rule to preserve
+the supplied training method; it is a proxy, not the competition's LWLRAP.
+
+Fold preparation now uses stratified groups keyed by `recording_id`. All events
+from the same recording stay together, fixing leakage possible with row-wise
+splits. Existing fold files that split a recording across folds are rejected.
+Validation uses deterministic center crops so the measurement does not change
+simply because a different image crop was sampled.
+
+### Audio and features
+
+I cache resampled waveforms as NumPy arrays, then compute features in the
+loader. For training, I center each audio window on the annotated event and
+pad it if the recording is shorter than the requested window.
+
+Librosa computes a mel power spectrogram and converts it to decibels. I
+standardize the values, scale them to image intensities, and duplicate the
+single spectrogram across RGB channels. This is channel replication, not a
+color map. ImageNet normalization makes the result usable by the CNN backbone.
+
+```mermaid
+flowchart LR
+    A[FLAC audio] --> B[Mono and resampling]
+    B --> C[Cached waveforms]
+    C --> D[Event crops for training]
+    C --> E[Overlapping windows for inference]
+    D --> F[Log-mel RGB images]
+    E --> F
+    F --> G[Res2Net50 or ResNeSt50]
+    G --> H[Species logits]
+    H --> I[Window max and fold mean]
+    I --> J[Sigmoid scores / rank ensemble CSV]
 ```
+
+### Models and training
+
+The `resnet` option uses **Res2Net50** (`res2net50_26w_4s`); `resnest` uses
+**ResNeSt50** (`resnest50d`). Both replace the classification head with the
+species output layer. Production training defaults to ImageNet initialization.
+
+I train with binary cross-entropy on logits, Adam, and a ReduceLROnPlateau
+scheduler. The default run uses **15 epochs**, a batch size of **8**, and a
+learning rate of **1e-4**. Scheduler patience controls learning-rate reduction;
+the supplied loop does not implement early stopping or mixed precision.
+
+Training combines Gaussian audio noise, random image crops, coarse dropout,
+brightness/contrast changes, and image noise. Mixup blends spectrogram tensors
+and their labels, with the dominant sample's weight drawn from **0.8–1.0**.
+This keeps the event-focused classifier exposed to combinations of sounds.
+
+### Inference and ensembling
+
+At inference I scan the complete recording using overlapping windows with
+**75% overlap**. Each class keeps its maximum logit across windows, allowing a
+brief call to contribute without averaging it away. The final window covers
+the recording tail without repeatedly scoring an identical trailing segment.
+
+I average fold logits and apply sigmoid to write bounded species scores.
+Optional TTA repeats inference with the training augmentations. The full
+pipeline writes both ordinary and TTA predictions before ensembling them.
+
+The ensemble averages within-recording species ranks, normalized to a bounded
+range. These are ranking scores, not calibrated probabilities. Prediction
+files are aligned by recording ID and retain the sample submission's order.
+The helper can also combine separately trained backbone outputs; a single CLI
+invocation trains only the selected backbone.
+
+## What mattered most
+
+These are the central design choices preserved in the code. I do not have
+saved ablations to assign a leaderboard gain to each one.
+
+- **Crop around the event:** make the training example contain the annotated
+  call instead of asking the model to find it in mostly background audio.
+- **Reuse visual features:** log-mel images make pretrained CNNs useful for
+  acoustic patterns without changing the classification architecture.
+- **Mix audio evidence:** noise, image augmentation, and mixup expose the model
+  to variations and combinations that occur in rainforest recordings.
+- **Pool over time:** overlapping windows and per-species maxima connect an
+  event classifier to a recording-level submission.
+- **Combine predictions by rank:** fold averaging and optional rank fusion
+  reduce reliance on one trained model or one augmented view.
+
+## Repository layout
+
+```text
 rfcx/
-├── src/                    # Source code
-│   ├── __init__.py
-│   ├── config.py          # Configuration management
-│   ├── data_utils.py      # Data loading and preprocessing
-│   ├── models.py          # Model architectures
-│   ├── trainer.py         # Training logic
-│   ├── predictor.py       # Inference and prediction
-│   └── pipeline.py        # End-to-end pipeline
-├── main.py                # Command-line interface
-├── example_usage.py       # Usage examples
-├── requirements.txt       # Dependencies
-└── README.md            # This file
+├── README.md             # Solution narrative and execution guide
+├── main.py               # Preprocess, train, predict, and full-run CLI
+├── dry_run.py            # Synthetic FLAC fixture and CPU integration checks
+├── example_usage.py      # Individually selectable Python API examples
+├── requirements.txt      # Runtime dependencies
+├── setup.py              # Package metadata and rfcx-train entry point
+├── .gitignore            # Excludes generated audio, checkpoints, and caches
+└── src/
+    ├── __init__.py       # Package marker
+    ├── config.py         # Independent audio/model/training/path settings
+    ├── data_utils.py     # Mel features, augmentations, datasets, loaders
+    ├── models.py         # Res2Net/ResNeSt factory and smoke-test override
+    ├── trainer.py        # BCE training, crop validation, fold checkpoints
+    ├── predictor.py      # Window pooling, fold inference, CSV output
+    └── pipeline.py       # Seeds, grouped folds, resampling, rank fusion
 ```
 
-## 🚀 Quick Start
+## How to run
 
-### Installation
+Use Python 3.11 and install `requirements.txt` in your environment:
 
-1. **Clone the repository**:
 ```bash
-git clone <repository-url>
-cd rfcx
+python -m pip install -r requirements.txt
 ```
 
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
+Download the competition data from Kaggle after accepting its rules. Expected
+input layout, relative to this folder:
 
-3. **Prepare data structure**:
-```
+```text
 data/
-├── raw/
-│   ├── train/           # Original FLAC files
-│   └── test/            # Test FLAC files
-├── resample/
-│   ├── train/           # Resampled NPY files
-│   └── test/            # Resampled NPY files
-├── train_tp.csv         # Training labels
-├── train_fp.csv         # False positive labels
-└── sample_submission.csv # Submission format
+├── train_tp.csv
+├── train_fp.csv          # Optional here; unused by this pipeline
+├── sample_submission.csv
+├── train/<recording_id>.flac
+└── test/<recording_id>.flac
 ```
 
-### Basic Usage
+Prepare grouped folds and waveform caches, then train and generate predictions:
 
-**Train a model**:
 ```bash
-python main.py --mode train --model resnet --epochs 15
+python main.py --mode preprocess --data-dir data --output-dir output --folds 5
+python main.py --mode full --data-dir data --output-dir output \
+  --model resnet --folds 5 --epochs 15 --tta --ensemble
 ```
 
-**Generate predictions**:
+Outputs include `output/positive.csv`, `output/resample/{train,test}/`,
+`output/models/resnet/model_fold_*.pt`, and
+`output/predictions/ensemble_predictions.csv`. Model families have separate
+checkpoint directories. Use separate output directories for experiments with
+different settings or backbone overrides.
+
+`--mode train` and `--mode predict` run the corresponding stages independently.
+Keep the model, fold count, audio settings, and image size consistent between
+stages. Prediction loads local checkpoints without downloading pretrained
+weights. Training downloads initialization weights unless `--no-pretrained`
+is set. CUDA is used when available; `--device cpu --num-workers 0` selects
+local CPU execution. Run `python main.py --help` for all path and size options.
+
+For a small, self-contained integration run:
+
 ```bash
-python main.py --mode predict --model resnet --tta
+python dry_run.py
 ```
 
-**Run full pipeline**:
-```bash
-python main.py --mode full --model resnet --tta --ensemble
-```
+This generates schema-compatible, shortened synthetic FLAC recordings under
+`sample_data/` and writes all results under `dry_run_output/`. It uses a random
+MobileNetV3-small backbone, **64 × 64** features, **2 folds**, and **1 epoch** per
+fold on CPU. All **24** output classes remain present; synthetic training calls
+cover only a subset. No pretrained weights are downloaded.
 
-### Python API
+The dry run exercises resampling, feature extraction, training, checkpoint
+reload, ordinary/TTA inference, rank fusion, and submission validation. It also
+checks short-audio padding, recording separation, and deterministic validation.
+It proves pipeline execution, not real-data quality or the original placement.
 
-```python
-from src.config import Config
-from src.pipeline import run_full_pipeline
+## Lessons / what I'd do differently
 
-# Configure the pipeline
-config = Config()
-config.training.epochs = 15
-config.training.batch_size = 8
-
-# Run complete pipeline
-run_full_pipeline(config, model_type="resnet", apply_tta=True, create_ensemble=True)
-```
-
-## 🔧 Configuration
-
-The `Config` class allows easy customization of all parameters:
-
-```python
-from src.config import Config
-
-config = Config()
-
-# Audio processing
-config.audio.sample_rate = 32000
-config.audio.n_mels = 300
-config.audio.segment_length = 5
-
-# Model settings
-config.model.num_classes = 24
-config.model.pretrained = True
-
-# Training parameters
-config.training.batch_size = 8
-config.training.learning_rate = 1e-4
-config.training.epochs = 15
-config.training.num_folds = 5
-```
-
-## 🎵 Audio Processing Pipeline
-
-### 1. Audio Resampling
-- Convert audio files to 32kHz sampling rate
-- Save as NumPy arrays for faster loading
-
-### 2. Spectrogram Generation
-- Extract mel-spectrograms with 300 mel bins
-- Use librosa for high-quality audio processing
-- Convert to dB scale for better dynamic range
-
-### 3. Image Conversion
-- Transform spectrograms to RGB images
-- Normalize and scale to 0-255 range
-- Apply color mapping for CNN compatibility
-
-### 4. Data Augmentation
-- **Audio**: Gaussian noise injection
-- **Image**: Random crops, brightness/contrast, dropout
-- **Mixup**: Linear combination of samples and labels
-
-## 🧠 Model Architectures
-
-### ResNet50 Variants
-- **Res2Net50**: Improved residual connections
-- **ResNeSt50**: Split-attention mechanism
-- **Transfer Learning**: Pre-trained ImageNet weights
-
-### Training Features
-- **Mixed Precision**: Efficient GPU utilization
-- **Gradient Clipping**: Stable training
-- **Learning Rate Scheduling**: Adaptive optimization
-- **Early Stopping**: Prevent overfitting
-
-## 📊 Evaluation Metrics
-
-- **Accuracy**: Top-1 classification accuracy
-- **Cross-Validation**: Stratified 5-fold validation
-- **Ensemble Performance**: Multiple model fusion
-- **Test-Time Augmentation**: Robust inference
-
-## 🔄 Advanced Techniques
-
-### Test-Time Augmentation (TTA)
-- Multiple augmented versions of test samples
-- Average predictions for improved robustness
-- Audio noise and image transformations
-
-### Ensemble Methods
-- Multiple model architectures
-- Ranking-based prediction fusion
-- Cross-validation model averaging
-
-### Data Augmentation Strategy
-- **Mixup**: Interpolation between samples
-- **Audio Augmentation**: Noise injection
-- **Image Augmentation**: Geometric and photometric transforms
-
-## 📈 Results
-
-The solution achieved competitive performance through:
-
-- **Robust Preprocessing**: High-quality audio feature extraction
-- **Advanced Augmentation**: Mixup and multi-modal augmentation
-- **Ensemble Methods**: Multiple architectures and TTA
-- **Cross-Validation**: Reliable performance estimation
-
-## 🛠️ Technical Highlights
-
-### Code Quality
-- **Modular Design**: Clean separation of concerns
-- **Configuration Management**: Centralized parameter control
-- **Type Hints**: Improved code readability
-- **Error Handling**: Robust pipeline execution
-
-### Performance Optimizations
-- **Efficient Data Loading**: Multi-process data loading
-- **Memory Management**: Proper GPU memory handling
-- **Batch Processing**: Optimized inference pipeline
-- **Caching**: Preprocessed data storage
-
-### Reproducibility
-- **Seed Management**: Deterministic results
-- **Version Control**: Tracked model versions
-- **Logging**: Comprehensive training logs
-- **Checkpointing**: Model state preservation
-
-## 🔮 Future Improvements
-
-1. **Advanced Architectures**: Vision Transformers, EfficientNet
-2. **Audio-Specific Models**: Wav2Vec2, AudioCLIP
-3. **Multi-Modal Learning**: Combine audio and metadata
-4. **Active Learning**: Intelligent sample selection
-5. **Model Compression**: Quantization and pruning
-
-## 📚 Dependencies
-
-- **PyTorch**: Deep learning framework
-- **timm**: Pre-trained model library
-- **librosa**: Audio processing
-- **albumentations**: Image augmentation
-- **audiomentations**: Audio augmentation
-- **scikit-learn**: Machine learning utilities
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- **Rainforest Connection**: For organizing the competition
-- **Kaggle Community**: For insights and discussions
-- **Open Source Libraries**: PyTorch, librosa, timm, and others
-- **Research Papers**: Mixup, ResNet, ResNeSt, and related work
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-*This project demonstrates advanced deep learning techniques for audio classification, showcasing expertise in signal processing, computer vision, and ensemble methods.*
+- I would select checkpoints using recording-level LWLRAP and save out-of-fold
+  predictions. Crop accuracy misses the competition's multilabel objective.
+- I would investigate the supplied false-positive events and overlapping
+  labels instead of treating every unannotated class as absent in each crop.
+- I would retain experiment manifests, checkpoints, and ablations alongside
+  the solution so each ensemble component's contribution is auditable.

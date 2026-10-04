@@ -21,6 +21,7 @@ class ModelScorer:
         self.model_name = model_name
         
         self.category_mapping = self._load_categories()
+        self.config.num_classes = len(self.category_mapping)
         self.model = self._load_model()
         self.test_loader = None
 
@@ -28,23 +29,29 @@ class ModelScorer:
         categories_path = os.path.join(self.config.data_path, 'categories.pkl')
         with open(categories_path, 'rb') as f:
             categories = pickle.load(f)
-        return [cat.replace('.csv', '') for cat in categories]
+        return [cat.removesuffix('.csv') for cat in categories]
 
     def _load_model(self) -> torch.nn.Module:
         model = ResNetClassifier(
             model_name=self.model_name,
-            num_classes=self.config.num_classes
+            num_classes=self.config.num_classes,
+            pretrained=False,
         )
         
-        state = torch.load(self.model_path, map_location=self.config.device)
+        state = torch.load(self.model_path, map_location=self.config.device, weights_only=True)
         
         if 'state_dict' in state:
+            if state.get('categories', self.category_mapping) != self.category_mapping:
+                raise ValueError('Checkpoint category order does not match categories.pkl')
+            if state.get('model_name', self.model_name) != self.model_name:
+                raise ValueError('Checkpoint architecture does not match model_name')
+            self.config.image_size = state.get('image_size', self.config.image_size)
             model_state = state['state_dict']
         else:
             model_state = state
         
         if any(key.startswith('module.') for key in model_state.keys()):
-            model_state = {key.replace('module.', ''): value 
+            model_state = {key.removeprefix('module.'): value
                           for key, value in model_state.items()}
         
         model.load_state_dict(model_state)
@@ -60,6 +67,8 @@ class ModelScorer:
         )
 
     def predict(self, test_df: pd.DataFrame) -> pd.DataFrame:
+        if test_df.empty:
+            raise ValueError('Test data must not be empty')
         self.prepare_test_data(test_df)
         
         all_predictions = []
@@ -88,20 +97,16 @@ class ModelScorer:
                           output_path: str,
                           top_k: int = 3) -> pd.DataFrame:
         
+        if not 1 <= top_k <= len(self.category_mapping):
+            raise ValueError('top_k must be between 1 and the number of categories')
         predictions_df = self.predict(test_df)
+        scores = predictions_df.drop(columns='key_id').to_numpy()
+        top_indices = np.argsort(-scores, axis=1, kind='stable')[:, :top_k]
+        words = [' '.join(self.category_mapping[idx].replace(' ', '_') for idx in row)
+                 for row in top_indices]
+        final_submission = pd.DataFrame({'key_id': predictions_df['key_id'], 'word': words})
         
-        def get_top_k_categories(row):
-            scores = row.drop('key_id').values
-            top_indices = np.argsort(scores)[-top_k:][::-1]
-            top_categories = [self.category_mapping[idx] for idx in top_indices]
-            return ' '.join(top_categories)
-        
-        submission_df = predictions_df.copy()
-        submission_df['word'] = submission_df.apply(get_top_k_categories, axis=1)
-        
-        final_submission = submission_df[['key_id', 'word']].copy()
-        
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(os.fspath(output_path)) or '.', exist_ok=True)
         final_submission.to_csv(output_path, index=False)
         
         print(f"Submission saved to {output_path}")

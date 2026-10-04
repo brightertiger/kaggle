@@ -1,6 +1,4 @@
-import os
 import pandas as pd
-import numpy as np
 from sklearn.metrics import log_loss
 
 from .config import Config
@@ -11,8 +9,8 @@ from .predictor import ModelPredictor
 from .feature_engineering import FeatureEngineer
 
 class IcebergPipeline:
-    def __init__(self):
-        self.config = Config()
+    def __init__(self, config=None):
+        self.config = config if config is not None else Config()
         self.data_processor = DataProcessor(self.config)
         self.trainer = ModelTrainer(self.config)
         self.predictor = ModelPredictor(self.config)
@@ -99,32 +97,25 @@ class IcebergPipeline:
             'vgg16.csv'
         ]
         
-        train_scores = []
-        test_scores = []
-        
+        train_ids = pd.read_json(f'{self.config.DATA_DIR}/download/train.json')['id']
+        test_ids = pd.read_json(f'{self.config.DATA_DIR}/download/test.json')['id']
+        train_scores, test_scores = {}, {}
+        train_labels = None
         for model_file in model_files:
-            train_model = pd.read_csv(f'{self.config.DATA_DIR}/model/{model_file}')
-            test_model = pd.read_csv(f'{self.config.SUBMISSION_DIR}/{model_file}')
-            
-            train_scores.append(train_model['score'])
-            test_scores.append(test_model['is_iceberg'])
-        
-        train_scores = pd.DataFrame(train_scores).T
-        test_scores = pd.DataFrame(test_scores).T
-        
-        train_stacked, test_stacked = self.ensemble.simple_stack(train_scores, test_scores)
-        
-        train_labels = pd.read_csv(f'{self.config.DATA_DIR}/model/cnn_basic.csv')['label']
-        ensemble_loss = log_loss(train_labels, train_stacked)
-        print(f"Ensemble Log Loss: {ensemble_loss:.6f}")
-        
-        ensemble_submission = pd.DataFrame({
-            'id': pd.read_csv(f'{self.config.SUBMISSION_DIR}/cnn_basic.csv')['id'],
-            'is_iceberg': test_stacked
-        })
-        
+            train_model = self._aligned_csv(f'{self.config.DATA_DIR}/model/{model_file}', train_ids)
+            test_model = self._aligned_csv(f'{self.config.SUBMISSION_DIR}/{model_file}', test_ids)
+            if train_labels is not None and not train_model['label'].equals(train_labels):
+                raise ValueError('Model OOF labels do not match')
+            train_labels = train_model['label']
+            train_scores[model_file] = train_model['score']
+            test_scores[model_file] = test_model['is_iceberg']
+        train_stacked, test_stacked = self.ensemble.simple_stack(
+            pd.DataFrame(train_scores), pd.DataFrame(test_scores))
+        print(f'Ensemble OOF Log Loss: {log_loss(train_labels, train_stacked):.6f}')
+        ensemble_submission = pd.DataFrame({'id': test_ids.to_numpy(),
+                                            'is_iceberg': test_stacked.to_numpy()})
         ensemble_submission.to_csv(f'{self.config.SUBMISSION_DIR}/ensemble.csv', index=False)
-        
+
         print("Ensemble creation completed!")
     
     def create_xgboost_features(self):
@@ -137,13 +128,38 @@ class IcebergPipeline:
         
         print("XGBoost feature creation completed!")
     
+    @staticmethod
+    def _aligned_csv(path, ids):
+        frame = pd.read_csv(path, dtype={'id': str}).set_index('id', verify_integrity=True)
+        ids = ids.astype(str)
+        if set(frame.index) != set(ids):
+            raise ValueError(f'Prediction IDs do not match input IDs: {path}')
+        return frame.loc[ids].reset_index()
+
+    def create_xgboost_submission(self):
+        train = pd.read_csv(f'{self.config.DATA_DIR}/train_xgb.csv', dtype={'id': str})
+        test = pd.read_csv(f'{self.config.DATA_DIR}/test_xgb.csv', dtype={'id': str})
+        labels = pd.read_json(f'{self.config.DATA_DIR}/download/train.json')[['id', 'is_iceberg']]
+        labels['id'] = labels['id'].astype(str)
+        train = train.merge(labels.rename(columns={'is_iceberg': 'label'}), on='id',
+                            validate='one_to_one')
+        for name in ('cnn_basic', 'cnn_advanced', 'vgg16'):
+            oof = self._aligned_csv(f'{self.config.DATA_DIR}/model/{name}.csv', train['id'])
+            scores = self._aligned_csv(f'{self.config.SUBMISSION_DIR}/{name}.csv', test['id'])
+            train[name] = oof['score'].to_numpy()
+            test[name] = scores['is_iceberg'].to_numpy()
+        predictions = self.ensemble.xgboost_stack(train, test)
+        submission = pd.DataFrame({'id': test['id'], 'is_iceberg': predictions})
+        submission.to_csv(f'{self.config.SUBMISSION_DIR}/xgboost.csv', index=False)
+        print('XGBoost submission written.')
+        return submission
+
     def run_full_pipeline(self):
-        print("Starting Iceberg Classification Pipeline...")
-        
+        print('Starting Iceberg Classification Pipeline...', flush=True)
         self.prepare_data()
+        self.create_xgboost_features()
         self.train_models()
         self.generate_predictions()
         self.create_ensemble()
-        self.create_xgboost_features()
-        
-        print("Pipeline completed successfully!")
+        self.create_xgboost_submission()
+        print('Pipeline completed successfully!')

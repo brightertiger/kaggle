@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torchvision import models
-from typing import Optional
 
 
 class ResNetClassifier(nn.Module):
@@ -15,13 +14,13 @@ class ResNetClassifier(nn.Module):
         self.num_classes = num_classes
         
         if model_name == 'resnet18':
-            self.backbone = models.resnet18(pretrained=pretrained)
+            self.backbone = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
             fc_features = 512
         elif model_name == 'resnet34':
-            self.backbone = models.resnet34(pretrained=pretrained)
+            self.backbone = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1 if pretrained else None)
             fc_features = 512
         elif model_name == 'resnet50':
-            self.backbone = models.resnet50(pretrained=pretrained)
+            self.backbone = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None)
             fc_features = 2048
         else:
             raise ValueError(f"Unsupported model: {model_name}")
@@ -52,9 +51,9 @@ class TopKAccuracy(nn.Module):
 
     def forward(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         batch_size = target.size(0)
-        _, pred = output.topk(self.k, 1, True, True)
+        _, pred = output.topk(min(self.k, output.size(1)), 1, True, True)
         pred = pred.t()
         correct = pred.eq(target.view(1, -1).expand_as(pred))
-        correct_k = correct[:self.k].view(-1).float().sum(0)
+        correct_k = correct[:self.k].reshape(-1).float().sum(0)
         result = correct_k.mul_(100.0 / batch_size)
         return result

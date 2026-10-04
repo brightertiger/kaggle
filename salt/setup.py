@@ -1,48 +1,19 @@
-from setuptools import setup, find_packages
+from pathlib import Path
+from setuptools import find_packages, setup
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
-
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
-
+ROOT = Path(__file__).resolve().parent
 setup(
-    name="salt-identification",
-    version="1.0.0",
-    author="Your Name",
-    author_email="your.email@domain.com",
-    description="Deep Learning Pipeline for Salt Identification from Aerial Images",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/salt-identification",
-    packages=find_packages(),
-    classifiers=[
-        "Development Status :: 4 - Beta",
-        "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
-        "Topic :: Scientific/Engineering :: Image Recognition",
-    ],
-    python_requires=">=3.7",
-    install_requires=requirements,
-    extras_require={
-        "dev": [
-            "pytest>=6.0",
-            "black>=21.0",
-            "flake8>=3.8",
-            "mypy>=0.800",
-        ],
-    },
-    entry_points={
-        "console_scripts": [
-            "salt-segmentation=main:main",
-        ],
-    },
-    include_package_data=True,
-    zip_safe=False,
+    name='salt-identification',
+    version='1.0.0',
+    author='Ujjwal Singh Rao',
+    description='U-Net segmentation for the TGS Salt Identification Challenge',
+    long_description=(ROOT / 'README.md').read_text(encoding='utf-8'),
+    long_description_content_type='text/markdown',
+    url='https://github.com/brightertiger/kaggle/tree/main/salt',
+    packages=find_packages(where=str(ROOT)),
+    package_dir={'': str(ROOT)},
+    py_modules=['main'],
+    python_requires='>=3.11',
+    install_requires=(ROOT / 'requirements.txt').read_text().splitlines(),
+    entry_points={'console_scripts': ['salt-segmentation=main:main']},
 )

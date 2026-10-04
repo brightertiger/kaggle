@@ -2,21 +2,20 @@ import os
 import pandas as pd
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from .config import Config
-from .models import ResNextClassifier, ModelFactory, load_model_checkpoint
-from .data_utils import create_test_loader
+from .models import ModelFactory, load_model_checkpoint
+from .data_utils import create_data_loaders, create_test_loader
 
 
 class ModelScorer:
     def __init__(self, config: Config):
         self.config = config
         self.device = torch.device(config.device)
-        self.model = ModelFactory.create_model(config).to(self.device)
+        self.model = ModelFactory.create_model(config, pretrained=False).to(self.device)
     
     def load_model(self, checkpoint_path: str) -> Dict:
         checkpoint_info = load_model_checkpoint(self.model, checkpoint_path)
@@ -25,7 +24,7 @@ class ModelScorer:
     
     def predict_batch(self, images: torch.Tensor) -> np.ndarray:
         with torch.no_grad():
-            outputs = self.model(images)
+            outputs = self.model(images.to(self.device))
             probabilities = torch.sigmoid(outputs)
             return probabilities.cpu().numpy()
     
@@ -44,6 +43,8 @@ class ModelScorer:
             all_predictions.append(predictions)
             all_ids.extend(batch_ids)
         
+        if not all_predictions:
+            raise ValueError('Cannot predict an empty dataset')
         all_predictions = np.vstack(all_predictions)
         
         prediction_df = pd.DataFrame(all_predictions)
@@ -72,44 +73,17 @@ class ModelScorer:
     
     def score_test_set(self, checkpoint_paths: List[str], 
                       output_path: str) -> pd.DataFrame:
-        print("Scoring test set...")
-        
+        if not checkpoint_paths:
+            raise ValueError('At least one checkpoint is required')
         test_loader = create_test_loader(self.config)
         all_predictions = []
-        
-        for i, checkpoint_path in enumerate(checkpoint_paths):
-            print(f"Loading model {i+1}/{len(checkpoint_paths)}: {checkpoint_path}")
-            
-            checkpoint_info = self.load_model(checkpoint_path)
-            print(f"Model {i+1}: Loss={checkpoint_info['loss']:.4f}, "
-                  f"Metric={checkpoint_info['metric']:.4f}")
-            
-            predictions = []
-            for batch in tqdm(test_loader, desc=f"Model {i+1} predictions"):
-                images = batch['image'].to(self.device)
-                batch_ids = batch['idx']
-                
-                batch_predictions = self.predict_batch(images)
-                predictions.append(batch_predictions)
-            
-            predictions = np.vstack(predictions)
-            all_predictions.append(predictions)
-        
-        ensemble_predictions = np.mean(all_predictions, axis=0)
-        
-        prediction_df = pd.DataFrame(ensemble_predictions)
-        prediction_df.columns = [f'scr_{i}' for i in range(ensemble_predictions.shape[1])]
-        
-        test_ids = []
-        for batch in test_loader:
-            test_ids.extend(batch['idx'])
-        
-        id_df = pd.DataFrame({'id': test_ids})
-        result_df = pd.concat([id_df, prediction_df], axis=1)
-        
+        for checkpoint_path in checkpoint_paths:
+            self.load_model(checkpoint_path)
+            predictions = self.generate_predictions(test_loader)
+            all_predictions.append(predictions.iloc[:, 1:].to_numpy())
+        result_df = predictions.copy()
+        result_df.iloc[:, 1:] = np.mean(all_predictions, axis=0)
         result_df.to_csv(output_path, index=False, compression='gzip')
-        print(f"Saved ensemble predictions to {output_path}")
-        
         return result_df
 
 
@@ -134,8 +108,9 @@ class SubmissionGenerator:
             
             return ' '.join(labels)
         
+        score_columns = [f'scr_{i}' for i in range(self.config.num_classes)]
         submission_df = predictions_df[['id']].copy()
-        submission_df['attribute_ids'] = predictions_df.iloc[:, 1:].apply(
+        submission_df['attribute_ids'] = predictions_df[score_columns].apply(
             process_row, axis=1
         )
         
@@ -143,69 +118,50 @@ class SubmissionGenerator:
     
     def create_submission(self, score_files: List[str], 
                          output_path: str) -> pd.DataFrame:
-        print("Creating submission file...")
-        
-        all_predictions = []
-        
-        for score_file in score_files:
-            print(f"Loading {score_file}...")
-            df = pd.read_csv(score_file, compression='gzip')
-            df.iloc[:, 1:] = df.iloc[:, 1:].astype(np.float16)
-            all_predictions.append(df)
-        
-        combined_df = pd.concat(all_predictions, ignore_index=True)
-        ensemble_df = combined_df.groupby('id').mean().reset_index()
-        
-        submission_df = self.process_predictions(ensemble_df)
-        
-        sample_submission = pd.read_csv(self.config.sample_submission_path)
-        final_submission = submission_df.append(sample_submission)
-        final_submission = final_submission.drop_duplicates(subset=['id'], keep='first')
-        
-        final_submission.to_csv(output_path, index=False)
-        print(f"Submission saved to {output_path}")
-        print(f"Total predictions: {len(final_submission)}")
-        
-        return final_submission
-    
-    def create_weighted_submission(self, score_files: List[str], 
-                                 weights: List[float], 
-                                 output_path: str) -> pd.DataFrame:
-        print("Creating weighted submission file...")
-        
-        if len(score_files) != len(weights):
-            raise ValueError("Number of score files must match number of weights")
-        
-        all_predictions = []
-        
+        return self.create_weighted_submission(score_files, [1.0] * len(score_files), output_path)
+
+    def create_weighted_submission(self, score_files: List[str],
+                                   weights: List[float], output_path: str) -> pd.DataFrame:
+        if not score_files or len(score_files) != len(weights):
+            raise ValueError('Provide one weight per score file, with at least one file')
+        weights = np.asarray(weights, dtype=float)
+        if not np.isfinite(weights).all() or (weights < 0).any() or weights.sum() <= 0:
+            raise ValueError('Weights must be finite, nonnegative and have a positive sum')
+        weights = weights / weights.sum()
+        sample = pd.read_csv(self.config.sample_submission_path, dtype={'id': str})
+        if sample.empty or sample['id'].duplicated().any():
+            raise ValueError('Sample submission must contain unique, nonempty ids')
+        ids = sample['id'].tolist()
+        columns = [f'scr_{i}' for i in range(self.config.num_classes)]
+        averaged = np.zeros((len(ids), len(columns)), dtype=np.float64)
         for score_file, weight in zip(score_files, weights):
-            print(f"Loading {score_file} with weight {weight}...")
-            df = pd.read_csv(score_file, compression='gzip')
-            df.iloc[:, 1:] = df.iloc[:, 1:] * weight
-            all_predictions.append(df)
-        
-        combined_df = pd.concat(all_predictions, ignore_index=True)
-        ensemble_df = combined_df.groupby('id').sum().reset_index()
-        
-        submission_df = self.process_predictions(ensemble_df)
-        
-        sample_submission = pd.read_csv(self.config.sample_submission_path)
-        final_submission = submission_df.append(sample_submission)
-        final_submission = final_submission.drop_duplicates(subset=['id'], keep='first')
-        
-        final_submission.to_csv(output_path, index=False)
-        print(f"Weighted submission saved to {output_path}")
-        print(f"Total predictions: {len(final_submission)}")
-        
-        return final_submission
+            frame = pd.read_csv(score_file, dtype={'id': str})
+            if frame['id'].duplicated().any() or set(frame['id']) != set(ids):
+                raise ValueError(f'{score_file} must contain exactly the test image ids')
+            values = frame.set_index('id').loc[ids, columns].to_numpy(dtype=float)
+            if not np.isfinite(values).all() or ((values < 0) | (values > 1)).any():
+                raise ValueError(f'{score_file} contains invalid probabilities')
+            averaged += values * weight
+        ensemble = pd.DataFrame(averaged, columns=columns)
+        ensemble.insert(0, 'id', ids)
+        submission = self.process_predictions(ensemble)
+        submission.to_csv(output_path, index=False)
+        print(f'Saved {len(submission)} test predictions to {output_path}')
+        return submission
 
 
 class EnsembleScorer:
     def __init__(self, config: Config):
         self.config = config
-        self.scorer = ModelScorer(config)
+        self._scorer = None
         self.submission_generator = SubmissionGenerator(config)
     
+    @property
+    def scorer(self):
+        if self._scorer is None:
+            self._scorer = ModelScorer(self.config)
+        return self._scorer
+
     def score_all_folds(self) -> List[str]:
         score_files = []
         
@@ -216,10 +172,10 @@ class EnsembleScorer:
             score_path = self.config.get_score_path(fold_idx)
             
             if os.path.exists(checkpoint_path):
-                self.scorer.score_fold(fold_idx, checkpoint_path, score_path)
+                self.scorer.score_test_set([checkpoint_path], score_path)
                 score_files.append(score_path)
             else:
-                print(f"Warning: Checkpoint not found for fold {fold_idx}: {checkpoint_path}")
+                raise FileNotFoundError(f"Checkpoint not found for fold {fold_idx}: {checkpoint_path}")
         
         return score_files
     

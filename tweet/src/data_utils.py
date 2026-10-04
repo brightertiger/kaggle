@@ -1,162 +1,124 @@
+"""Shared BPE encoding and character alignment for training and inference."""
 import pandas as pd
-import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from tokenizers import ByteLevelBPETokenizer
-from typing import Tuple, Dict, Any
 from .config import Config
 
+
+def normalize_text(text: str) -> str:
+    return ' ' + ' '.join(str(text).lower().split())
+
+
+def load_tokenizer(config: Config) -> ByteLevelBPETokenizer:
+    tokenizer = ByteLevelBPETokenizer(
+        vocab=config.data.vocab_file, merges=config.data.merges_file,
+        lowercase=True, add_prefix_space=True,
+    )
+    for token, expected in [('<s>', 0), ('<pad>', 1), ('</s>', 2)]:
+        if tokenizer.token_to_id(token) != expected:
+            raise ValueError(f'Tokenizer must use RoBERTa special IDs: {token}={expected}')
+    return tokenizer
+
+
+def read_data(path: str, labeled: bool) -> pd.DataFrame:
+    data = pd.read_csv(path, dtype={'textID': str}, keep_default_na=False)
+    required = {'textID', 'text', 'sentiment'}
+    if labeled:
+        required.add('selected_text')
+    missing = required - set(data.columns)
+    if missing:
+        raise ValueError(f'{path}: missing columns {sorted(missing)}')
+    data['text'] = data['text'].fillna('').astype(str)
+    data['sentiment'] = data['sentiment'].str.lower().str.strip()
+    if not data['sentiment'].isin(['positive', 'negative', 'neutral']).all():
+        raise ValueError('Sentiment must be positive, negative, or neutral')
+    if labeled:
+        data['selected_text'] = data['selected_text'].fillna('').astype(str)
+        data = data[data['text'].str.strip().ne('') & data['selected_text'].str.strip().ne('')]
+    return data.reset_index(drop=True)
+
+
+def encode_text(tokenizer, text: str, sentiment: str, max_length: int):
+    encoded = tokenizer.encode(normalize_text(text))
+    sentiment_ids = tokenizer.encode(sentiment.lower().strip()).ids
+    prefix = [0] + sentiment_ids + [2, 2]
+    available = max_length - len(prefix) - 1
+    if available < 1:
+        raise ValueError('max_length must leave room for tweet tokens after sentiment')
+    tweet_ids = encoded.ids[:available]
+    tokens = prefix + tweet_ids + [2]
+    offsets = [(0, 0)] * len(prefix) + encoded.offsets[:available] + [(0, 0)]
+    attention = [1] * len(tokens)
+    padding = max_length - len(tokens)
+    tokens += [1] * padding
+    attention += [0] * padding
+    offsets += [(0, 0)] * padding
+    return (torch.tensor(tokens, dtype=torch.long),
+            torch.tensor(attention, dtype=torch.long),
+            torch.tensor(offsets, dtype=torch.long))
+
+
 class TweetDataset(Dataset):
-    
     def __init__(self, data_path: str, subset: int, config: Config, is_training: bool = True):
-        self.data = pd.read_csv(data_path)
-        self.data['text'] = self.data['text'].fillna(' ')
-        self.data = self.data[self.data['text'] != ' ']
-        
+        self.data = read_data(data_path, labeled=is_training)
+        self.is_training = is_training
         if is_training:
+            if 'subset' not in self.data:
+                raise ValueError('Training/evaluation requires the processed CSV with a subset column')
             if subset >= 0:
                 self.data = self.data[self.data['subset'] != subset]
             else:
                 self.data = self.data[self.data['subset'] == abs(subset) - 1]
-        
         self.data = self.data.reset_index(drop=True)
         self.config = config
-        self.tokenizer = self._load_tokenizer()
-        
-    def _load_tokenizer(self) -> ByteLevelBPETokenizer:
-        params = {
-            'vocab_file': self.config.data.vocab_file,
-            'merges_file': self.config.data.merges_file,
-            'lowercase': True,
-            'add_prefix_space': True
-        }
-        return ByteLevelBPETokenizer(**params)
-    
-    def __len__(self) -> int:
+        self.tokenizer = load_tokenizer(config)
+
+    def __len__(self):
         return len(self.data)
-    
-    def _encode_text(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        text = self.data.loc[idx, 'text'].lower()
-        sentiment = self.data.loc[idx, 'sentiment'].lower().strip()
-        text = " " + " ".join(text.split())
-        
-        encodes = self.tokenizer.encode(text)
-        sentiment_ids = self.tokenizer.encode(sentiment).ids
-        
-        tokens = [0] + sentiment_ids + [2, 2] + encodes.ids + [2]
-        offsets = [(0, 0)] * 4 + encodes.offsets + [(0, 0)]
-        
-        padding = self.config.data.max_length - len(tokens)
-        if padding > 0:
-            tokens += [1] * padding
-            offsets += [(0, 0)] * padding
-            
-        tokens = torch.tensor(tokens)
-        masks = torch.where(tokens != 1, torch.tensor(1), torch.tensor(0))
-        offsets = torch.tensor(offsets)
-        
-        return tokens, masks, offsets
-    
-    def _compute_labels(self, idx: int, offsets: torch.Tensor) -> Tuple[int, int]:
-        text = self.data.loc[idx, 'text'].lower()
-        selected_text = self.data.loc[idx, 'selected_text'].lower()
-        
-        text = " " + " ".join(text.split())
-        selected_text = " " + " ".join(selected_text.split())
-        
-        length = len(selected_text) - 1
-        start, end = None, None
-        
-        for ind in (i for i, e in enumerate(text) if e == selected_text[1]):
-            if " " + text[ind: ind + length] == selected_text:
-                start = ind
-                end = ind + length - 1
-                break
-        
-        char_targets = [0] * len(text)
-        if start is not None and end is not None:
-            for ct in range(start, end + 1):
-                char_targets[ct] = 1
-        
-        target_idx = []
-        for j, (offset1, offset2) in enumerate(offsets):
-            if sum(char_targets[offset1: offset2]) > 0:
-                target_idx.append(j)
-        
-        if target_idx:
-            start_idx = target_idx[0]
-            end_idx = target_idx[-1]
-        else:
-            start_idx = end_idx = 0
-            
-        return start_idx, end_idx
-    
-    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
+
+    def _encode_text(self, idx):
+        row = self.data.iloc[idx]
+        return encode_text(self.tokenizer, row.text, row.sentiment, self.config.data.max_length)
+
+    def _compute_labels(self, idx, offsets):
+        row = self.data.iloc[idx]
+        text = normalize_text(row.text)
+        selected = normalize_text(row.selected_text).strip()
+        start = text.find(selected)
+        if start < 0:
+            raise ValueError(f'Selected text is not a substring for textID={row.textID}')
+        end = start + len(selected)
+        target = [i for i, (a, b) in enumerate(offsets.tolist()) if b > start and a < end and b > a]
+        if not target or int(offsets[target[-1], 1]) < end:
+            raise ValueError(f'Selected span was truncated for textID={row.textID}; increase max_length')
+        return target[0], target[-1]
+
+    def __getitem__(self, index):
         tokens, masks, offsets = self._encode_text(index)
-        start_idx, end_idx = self._compute_labels(index, offsets)
-        
-        aux_label = [0] * (self.config.data.max_length - 1)
-        aux_label[start_idx: end_idx + 1] = [1] * (end_idx - start_idx + 1)
-        aux_label = torch.tensor(aux_label).reshape(-1,)
-        
-        return {
-            'tokens': tokens,
-            'masks': masks,
-            'start_idx': torch.tensor(start_idx),
-            'end_idx': torch.tensor(end_idx),
-            'aux_label': aux_label
-        }
+        text_mask = offsets[:, 1] > offsets[:, 0]
+        if not text_mask.any():
+            # Empty test rows retain their IDs; decoding returns an empty string.
+            text_mask[0] = True
+        item = {'tokens': tokens, 'masks': masks, 'text_mask': text_mask}
+        if self.is_training:
+            start, end = self._compute_labels(index, offsets)
+            auxiliary = torch.zeros(self.config.data.max_length)
+            auxiliary[start:end + 1] = 1
+            item.update(start_idx=torch.tensor(start), end_idx=torch.tensor(end), aux_label=auxiliary)
+        return item
 
-def create_data_loaders(config: Config, fold: int) -> Tuple[DataLoader, DataLoader]:
-    train_dataset = TweetDataset(
-        config.data.train_path, 
-        subset=fold, 
-        config=config, 
-        is_training=True
-    )
-    
-    valid_dataset = TweetDataset(
-        config.data.train_path, 
-        subset=-fold-1, 
-        config=config, 
-        is_training=True
-    )
-    
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.data.batch_size,
-        num_workers=config.data.num_workers,
-        drop_last=True,
-        shuffle=True
-    )
-    
-    valid_loader = DataLoader(
-        valid_dataset,
-        batch_size=config.data.batch_size,
-        num_workers=config.data.num_workers,
-        drop_last=False,
-        shuffle=False
-    )
-    
-    return train_loader, valid_loader
 
-def create_submission_dataset(config: Config, test_path: str) -> DataLoader:
-    test_data = pd.read_csv(test_path)
-    test_data['text'] = test_data['text'].fillna(' ')
-    test_data = test_data[test_data['text'] != ' ']
-    test_data = test_data.reset_index(drop=True)
-    
-    dataset = TweetDataset(
-        test_path,
-        subset=0,
-        config=config,
-        is_training=False
-    )
-    
-    return DataLoader(
-        dataset,
-        batch_size=config.data.batch_size,
-        num_workers=config.data.num_workers,
-        drop_last=False,
-        shuffle=False
-    )
+def create_data_loaders(config: Config, fold: int):
+    train = TweetDataset(config.data.train_path, fold, config)
+    valid = TweetDataset(config.data.train_path, -fold - 1, config)
+    if not len(train) or not len(valid):
+        raise ValueError(f'Fold {fold} has an empty training or validation split')
+    kwargs = dict(batch_size=config.data.batch_size, num_workers=config.data.num_workers, drop_last=False)
+    return DataLoader(train, shuffle=True, **kwargs), DataLoader(valid, shuffle=False, **kwargs)
+
+
+def create_submission_dataset(config: Config, test_path: str):
+    dataset = TweetDataset(test_path, 0, config, is_training=False)
+    return DataLoader(dataset, batch_size=config.data.batch_size,
+                      num_workers=config.data.num_workers, shuffle=False, drop_last=False)

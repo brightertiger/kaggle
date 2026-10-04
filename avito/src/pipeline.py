@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any
 import os
 from .config import Config
-from .data_utils import DataSplitter, DataLoader, FeatureValidator
+from .data_utils import DataSplitter, DataLoader, FeatureValidator, align_rows
 from .feature_engineering import FeaturePipeline
 from .models import ModelPipeline
 
@@ -11,6 +11,7 @@ from .models import ModelPipeline
 class AvitoPipeline:
     def __init__(self, config: Config = None):
         self.config = config or Config()
+        self.config.avito.create_directories()
         self.data_splitter = DataSplitter(self.config)
         self.data_loader = DataLoader(self.config)
         self.feature_validator = FeatureValidator(self.config)
@@ -26,10 +27,8 @@ class AvitoPipeline:
         print("=== Data Preprocessing ===")
         
         print("Creating cross-validation folds...")
-        self.data_splitter.create_cv_folds()
-        
-        print("Validating data files...")
         self._validate_data_files()
+        self.data_splitter.create_cv_folds()
         
         print("Data preprocessing completed!")
     
@@ -46,7 +45,19 @@ class AvitoPipeline:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"Required data file not found: {file_path}")
         
-        print("All required data files found!")
+        key, target = self.config.avito.ID_COLUMN, self.config.avito.TARGET_COLUMN
+        train = self.data_loader.load_train_data([key, target])
+        test = self.data_loader.load_test_data([key])
+        for name, frame in [('train', train), ('test', test)]:
+            if frame.empty or frame[key].isna().any() or frame[key].duplicated().any():
+                raise ValueError(f'{name} must contain nonempty, unique item IDs')
+        if set(train[key]) & set(test[key]):
+            raise ValueError('Training and test item IDs overlap')
+        if not train[target].between(0, 1).all():
+            raise ValueError('Training targets must be finite probabilities in [0, 1]')
+        if not 2 <= self.config.avito.N_FOLDS <= len(train):
+            raise ValueError('N_FOLDS must be between 2 and the number of training rows')
+        print("Required data files and training targets validated!")
     
     def generate_features(self) -> None:
         """Generate all feature engineering components."""
@@ -91,11 +102,16 @@ class AvitoPipeline:
         """Generate final submission file."""
         print("=== Generating Submission ===")
         
-        submission_file = '../../data/outsample/scores/ensemble_model.csv'
+        submission_file = f'{self.config.avito.OUTSAMPLE_DIR}/ensemble_model.csv'
         if not os.path.exists(submission_file):
             raise FileNotFoundError("Ensemble predictions not found. Please train models first.")
         
-        submission = pd.read_csv(submission_file)
+        submission = align_rows(
+            self.data_loader.load_test_data([self.config.avito.ID_COLUMN]),
+            pd.read_csv(submission_file), self.config.avito.ID_COLUMN)
+        if not np.isfinite(submission[self.config.avito.TARGET_COLUMN]).all():
+            raise ValueError('Submission contains non-finite predictions')
+        submission[self.config.avito.TARGET_COLUMN] = submission[self.config.avito.TARGET_COLUMN].clip(0, 1)
         submission = submission.rename(columns={self.config.avito.TARGET_COLUMN: 'deal_probability'})
         
         output_path = f"{self.config.avito.OUTPUT_DIR}/submission.csv"
@@ -130,76 +146,33 @@ class AvitoPipeline:
             print(f"❌ Pipeline failed with error: {e}")
             raise
     
-    def evaluate_pipeline(self) -> Dict[str, float]:
-        """Evaluate the pipeline performance using cross-validation."""
-        print("=== Pipeline Evaluation ===")
-        
-        submission_file = '../../data/outsample/scores/ensemble_model.csv'
-        if not os.path.exists(submission_file):
-            raise FileNotFoundError("Ensemble predictions not found. Please train models first.")
-        
-        valid_scores = []
-        
+    def evaluate_pipeline(self) -> Dict[str, Any]:
+        """Report blend diagnostics; reused stacking folds are not nested CV."""
+        key, target = self.config.avito.ID_COLUMN, self.config.avito.TARGET_COLUMN
+        predictions = pd.read_csv(f'{self.config.avito.INSAMPLE_DIR}/ensemble_model.csv')
+        predictions = predictions.rename(columns={target: 'prediction'})
+        actual = self.data_loader.load_train_data([key, target])
+        paired = align_rows(actual, predictions, key)
+        scores = []
         for fold in range(1, self.config.avito.N_FOLDS + 1):
-            valid_idx = pd.read_csv(f'../../data/data/files/valid_{fold}.csv')
-            actual = self.data_loader.load_train_data([self.config.avito.ID_COLUMN, self.config.avito.TARGET_COLUMN])
-            valid_actual = actual.merge(valid_idx, on=self.config.avito.ID_COLUMN)
-            
-            pred_file = f'../../data/insample/scores/ensemble_model.csv'
-            if os.path.exists(pred_file):
-                predictions = pd.read_csv(pred_file)
-                valid_pred = predictions.merge(valid_idx, on=self.config.avito.ID_COLUMN)
-                
-                rmse = np.sqrt(np.mean((valid_actual[self.config.avito.TARGET_COLUMN] - valid_pred['score'])**2))
-                valid_scores.append(rmse)
-                print(f"Fold {fold} RMSE: {rmse:.5f}")
-        
-        if valid_scores:
-            mean_rmse = np.mean(valid_scores)
-            std_rmse = np.std(valid_scores)
-            
-            print(f"\nCross-validation results:")
-            print(f"Mean RMSE: {mean_rmse:.5f}")
-            print(f"Std RMSE: {std_rmse:.5f}")
-            
-            return {
-                'mean_rmse': mean_rmse,
-                'std_rmse': std_rmse,
-                'fold_scores': valid_scores
-            }
-        else:
-            print("No validation scores found.")
-            return {}
-    
+            _, valid_idx = self.data_loader.load_fold_data(fold)
+            valid = align_rows(valid_idx, paired, key)
+            rmse = float(np.sqrt(np.mean((valid[target] - valid['prediction']) ** 2)))
+            scores.append(rmse)
+            print(f'Fold {fold} blend diagnostic RMSE: {rmse:.5f}')
+        return {'mean_rmse': float(np.mean(scores)), 'std_rmse': float(np.std(scores)),
+                'fold_scores': scores}
+
     def get_feature_importance(self) -> Dict[str, Any]:
-        """Analyze feature importance from the trained models."""
-        print("=== Feature Importance Analysis ===")
-        
-        importance_info = {
-            'text_features': {
-                'description': 'TF-IDF features from title and description text',
-                'count': self.config.model.TFIDF_MAX_FEATURES * 2,
-                'importance': 'High - Text content is crucial for deal prediction'
-            },
-            'user_features': {
-                'description': 'User behavior and activity features',
-                'count': 4,
-                'importance': 'Medium - User patterns provide valuable signals'
-            },
-            'count_features': {
-                'description': 'Categorical aggregation features',
-                'count': 8,
-                'importance': 'Medium - Category and location patterns'
-            },
-            'date_features': {
-                'description': 'Temporal features from activation date',
-                'count': 1,
-                'importance': 'Low - Day of week has limited impact'
-            }
+        """Compatibility alias for a feature inventory, not measured importance."""
+        return {
+            'text_features': {'count': 'vocabulary-dependent',
+                              'description': 'Title/description TF-IDF and parameter counts',
+                              'importance': 'Not measured; used by text Ridge'},
+            'user_features': {'count': 4, 'description': 'Seller diversity and missingness',
+                              'importance': 'Not measured; used by user Ridge'},
+            'count_features': {'count': 8, 'description': 'Categorical frequencies',
+                               'importance': 'Generated only; not used by the compact models'},
+            'date_features': {'count': 1, 'description': 'Activation weekday',
+                              'importance': 'Generated only; not used by the compact models'}
         }
-        
-        print("Feature importance summary:")
-        for feature_type, info in importance_info.items():
-            print(f"  {feature_type}: {info['count']} features - {info['importance']}")
-        
-        return importance_info

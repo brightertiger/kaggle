@@ -54,3 +54,11 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Synthetic smoke test and local runtime caches
+sample_data/
+dry_run_output/
+.pytest_cache/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

@@ -1,9 +1,5 @@
-import torch
 import pandas as pd
-from pathlib import Path
-from typing import Dict, Any, Optional
-import argparse
-import os
+from typing import Dict, Any
 
 from ..core import Config
 from ..data import preprocess_all_data
@@ -26,7 +22,7 @@ class IntracranialHemorrhagePipeline:
         
         print("Data preprocessing completed successfully!")
     
-    def train_models(self, model_name: str = 'resnext101') -> None:
+    def train_models(self, model_name: str = 'resnext101') -> Dict[str, Any]:
         """Train models for all folds"""
         print("=" * 50)
         print("MODEL TRAINING")
@@ -80,36 +76,3 @@ class IntracranialHemorrhagePipeline:
         print("=" * 50)
         
         return submission_df
-
-def main():
-    """Main function for command line usage"""
-    parser = argparse.ArgumentParser(description='Intracranial Hemorrhage Detection Pipeline')
-    parser.add_argument('--mode', type=str, choices=['preprocess', 'train', 'predict', 'full'], 
-                       default='full', help='Pipeline mode')
-    parser.add_argument('--model', type=str, default='resnext101', 
-                       help='Model architecture')
-    parser.add_argument('--skip-preprocess', action='store_true', 
-                       help='Skip preprocessing step')
-    parser.add_argument('--device', type=str, default='auto', 
-                       help='Device to use (cuda/cpu/auto)')
-    
-    args = parser.parse_args()
-    
-    config = Config()
-    
-    if args.device != 'auto':
-        config.DEVICE = args.device
-    
-    pipeline = IntracranialHemorrhagePipeline(config)
-    
-    if args.mode == 'preprocess':
-        pipeline.preprocess_data()
-    elif args.mode == 'train':
-        pipeline.train_models(args.model)
-    elif args.mode == 'predict':
-        pipeline.generate_predictions(args.model)
-    elif args.mode == 'full':
-        pipeline.run_full_pipeline(args.model, args.skip_preprocess)
-
-if __name__ == "__main__":
-    main()

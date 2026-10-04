@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 class Config:
@@ -45,9 +44,14 @@ class Config:
     
     # Neural network parameters
     NN_BATCH_SIZE = 8
-    NN_EPOCHS = 20
+    NN_EPOCHS = None  # Override the staged schedule for short runs
     NN_LEARNING_RATE = 0.0001
     NN_VALIDATION_SPLIT = 0.15
+    NN_SCHEDULE = [(0.0001, 8, 3), (0.001, 8, 3), (0.0005, 16, 10),
+                   (0.0003, 16, 10), (0.0002, 32, 5)]
+    LSTM_UNITS = 100
+    RANDOM_EMBEDDINGS = False
+    NLTK_DATA_DIR = Path('nltk_data')
     
     # Cross-validation
     N_FOLDS = 5
@@ -70,5 +74,5 @@ class Config:
     TEST_NN_SCORE = 'test_nn_score.csv'
     TRAIN_LSTM_SCORE = 'train_lstm_score.csv'
     TEST_LSTM_SCORE = 'test_lstm_score.csv'
-    XGB_MODEL = 'xgb_model'
+    XGB_MODEL = 'xgb_model.json'
     XGB_SCORE = 'xgb_score.csv'

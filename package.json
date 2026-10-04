@@ -6,7 +6,7 @@
   "scripts": {
     "start": "python -m http.server 8000",
     "serve": "python -m http.server 8000",
-    "build": "echo 'No build step required for static site'",
+    "build": "python build_site.py",
     "deploy": "echo 'Deployment handled by GitHub Actions'"
   },
   "keywords": [

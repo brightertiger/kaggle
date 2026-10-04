@@ -1,376 +1,240 @@
-# TalkingData AdTracking Fraud Detection
+# [TalkingData AdTracking Fraud Detection](https://www.kaggle.com/competitions/talkingdata-adtracking-fraud-detection)
 
-A comprehensive machine learning solution for detecting fraudulent ad clicks in mobile advertising, developed for the [TalkingData AdTracking Fraud Detection Challenge](https://www.kaggle.com/c/talkingdata-adtracking-fraud-detection) on Kaggle.
+**Final rank: #16 / 3,943 teams · Gold medal**
 
-## 🏆 Challenge Overview
+Ujjwal Singh Rao · Kaggle Master
 
-The TalkingData AdTracking Fraud Detection Challenge aimed to identify fraudulent clicks on mobile advertisements. This is a critical problem in digital advertising where click fraud can lead to significant financial losses for advertisers and platforms.
+I approached this as a problem of recovering behavior from anonymous click logs.
+The core of my solution is grouped activity features, a date/hour validation
+holdout, and a weighted LightGBM ensemble.
+This folder contains the runnable, refactored portion of that solution.
+The competition placement above comes from the portfolio's root README;
+the synthetic example below checks execution, not leaderboard performance.
 
-### Problem Statement
-- **Task**: Binary classification to predict if a user will download an app after clicking an ad
-- **Input**: Click data with features like IP, app, device, OS, channel, and timestamp
-- **Output**: Probability of app download (is_attributed)
-- **Dataset**: ~184 million training samples, ~187 million test samples
-- **Evaluation**: AUC (Area Under the Curve) metric
+## Problem
 
-### Challenge Characteristics
-- **Massive Scale**: Over 370 million total samples requiring efficient processing
-- **Class Imbalance**: Highly imbalanced dataset (~0.2% positive rate)
-- **Time Series Nature**: Data spans multiple days with temporal patterns
-- **Memory Constraints**: Large dataset requiring careful memory optimization
-- **Feature Engineering**: Extensive feature creation from categorical variables
+For each mobile advertisement click, I predict whether it leads to an attributed
+app download. The target is `is_attributed`, and the evaluation metric is ROC AUC.
+Although the competition is framed around fraud detection, a negative target
+means no attributed download; it is not a verified fraud label.
 
-## 🚀 Solution Architecture
+The difficult part is separating useful intent from repetitive background
+activity. Positive outcomes are rare, categorical identifiers have many possible
+values, and the meaning of a click depends on surrounding traffic.
+The data also changes over time, so validation design matters as much as model fit.
 
-### 1. Advanced Feature Engineering
+## Data
 
-**Multi-Level Count Features**: Created comprehensive counting features at different granularities:
+The inputs are tabular CSV click logs, with one event per row.
 
-```python
-# Single feature counts
-ip_cnt, app_cnt, os_cnt
+| File / fields | Role |
+| --- | --- |
+| `train.csv` | Labeled clicks used for fitting and the validation holdout |
+| `test.csv` | Clicks requiring predictions, identified by `click_id` |
+| `test_supplement.csv` | Additional unlabeled traffic for aggregate features |
+| `ip`, `app`, `device`, `os`, `channel` | Integer identifiers describing each click |
+| `click_time` | Timestamp used for filtering, validation, and time features |
+| `is_attributed` | Binary training label and submission prediction column |
+| `attributed_time` | Training-only outcome timestamp; deliberately excluded from inputs |
 
-# Multi-feature combinations
-ip_day_hour_cnt, ip_app_cnt, ip_app_os_cnt, ip_device_cnt
-app_channel_cnt, ip_hour_os_cnt, ip_hour_app_cnt
+The loader uses unsigned integer types for identifiers and parses `click_time`.
+I keep intermediate tables in Feather format to avoid repeatedly parsing CSVs.
 
-# User-based features
-user_count, user_app_count
+Test and supplement IDs belong to separate namespaces.
+The preprocessing step matches events using all click identifiers, the timestamp,
+and occurrence order for repeated identical events.
+It counts overlapping test events once while retaining additional supplement traffic.
+Predictions always retain the official test IDs and their input order.
 
-# Unique count features
-ip_app_unq, ip_channel_unq
+## Approach
 
-# Ranking features
-ip_rank, app_channel_rank, app_os_rank, channel_os_rank
+### Validation and preprocessing
+
+I retain rows after `2017-11-08 12:00:00` **or** rows in the selected hours:
+`4, 5, 9, 10, 13, 14`.
+The validation set contains retained rows after `2017-11-09` in those hours;
+all other retained rows form the training set.
+
+This is the date/hour holdout encoded in the recovered solution.
+It is not a strictly forward-only split: training can include later events outside
+the validation hours. I keep that behavior explicit instead of presenting the
+holdout as a general estimate of future production performance.
+Both partitions must contain positive and negative labels for AUC evaluation.
+
+I derive `day` and `hour` before building aggregate tables.
+`day` participates in aggregate keys but is excluded from model predictors,
+along with IDs, raw timestamps, and the target.
+
+### Features: describe the activity around a click
+
+The pipeline builds these feature families:
+
+- **Volume:** counts by IP, app, and OS, plus combinations such as
+  IP–day–hour, IP–app, IP–app–OS, IP–device, and app–channel.
+- **Local time context:** IP–hour–OS and IP–hour–app counts.
+- **User proxies:** counts for IP–device–OS and IP–device–OS–app.
+  These are activity groupings, not verified individual users.
+- **Diversity:** distinct apps and channels seen for an IP.
+- **Frequency ranks:** dense ranks for IP, app–channel, app–OS, and channel–OS.
+
+These tables produce 18 engineered columns alongside the raw categorical inputs
+and hour. Joins enforce one aggregate value per key, preventing accidental row
+multiplication. Missing counts become zero; missing ranks use the retained
+fallback value of `11`.
+
+I build aggregate mappings from retained training clicks and unlabeled
+test/supplement traffic. Validation rows and labels do not enter those mappings.
+This is a transductive competition workflow: the available test traffic helps
+describe activity, without using test outcomes. It is not an online feature service.
+
+A standalone next-click helper computes the time to the following event for an
+IP–app–device–OS group. It is exercised by the dry run, but it is not connected to
+the default model feature set. Target/running encodings are not implemented here.
+
+### Models and training
+
+I use LightGBM binary classifiers with categorical identifiers passed explicitly
+as categorical features. The recovered configurations differ in learning rate,
+leaf count, and row subsampling:
+
+| Configuration | Learning rate | Leaves | Row subsample |
+| --- | ---: | ---: | ---: |
+| `model_1` | 0.075 | 32 | 0.6 |
+| `model_2` | 0.1 | 24 | 0.5 |
+
+Both use feature subsampling and `scale_pos_weight=99.7` to emphasize rare
+positive outcomes. Training uses validation AUC and early stopping, with a
+configurable maximum of 1,000 boosting rounds and patience of 50 rounds.
+The random seed and CPU thread count are configurable.
+Each booster is saved with feature names so later prediction runs use the same order.
+
+### Ensemble and output
+
+The runnable ensemble contains the two configurations above.
+The historical configuration retains six blend weights, but only two model
+parameter sets are present; I do not reconstruct the missing models or claim
+this folder exactly reproduces the final competition submission.
+
+I combine the available model scores with weights `2.0` and `0.5`.
+The retained post-processing divides the weighted sum by its maximum across the
+prediction batch. That preserves ranking for AUC, but the resulting values are
+not calibrated probabilities and depend on the prediction batch.
+All-zero scores remain zero. File-based blending aligns by `click_id` and rejects
+missing or duplicate IDs instead of silently dropping rows.
+
+```mermaid
+flowchart TD
+    A[Train CSV] --> B[Date/hour filtering and holdout]
+    B --> C[Retained training clicks]
+    B --> V[Validation clicks]
+    D[Test and supplement CSVs] --> E[Match overlapping events]
+    C --> F[Count, diversity, user, and rank tables]
+    E --> F
+    F --> G[Join features onto train, validation, and test]
+    V --> G
+    G --> H[LightGBM model_1 and model_2]
+    H --> I[Weighted scores and maximum normalization]
+    I --> J[click_id, is_attributed submission]
 ```
 
-**Key Design Decisions**:
-- Time-based filtering to focus on relevant hours (4, 5, 9, 10, 13, 14)
-- Date-based train/validation split for temporal consistency
-- Memory optimization with appropriate data types (uint8, uint16, uint32)
-- Feature selection based on domain knowledge and correlation analysis
+## What mattered most
 
-### 2. Sophisticated Data Preprocessing
+These are the central ideas preserved in the solution; I do not have a saved
+ablation table here to attach score gains to each one.
 
-**Temporal Data Handling**:
-- Extract hour and day features from timestamps
-- Filter data based on specific time windows
-- Create validation split using date boundaries (Nov 9, 2017)
+- I represented repeated activity at several granularities, rather than asking
+  trees to infer behavior from isolated identifier values.
+- I combined volume with diversity: many clicks and many distinct apps describe
+  different patterns of activity.
+- I used hour-aware validation to expose temporal differences in traffic.
+- I paired class weighting with AUC-based early stopping for the imbalanced target.
+- I blended related tree configurations while preserving event identity through
+  feature joins and submission assembly.
 
-**Memory Optimization**:
-- Optimized data types for categorical features
-- Efficient storage using Feather format
-- Chunked processing for large datasets
+## Repository layout
 
-### 3. Ensemble Learning Strategy
-
-**Multiple LightGBM Models**: Trained 6 different LightGBM models with varying parameters:
-
-```python
-# Model 1: Conservative approach
-learning_rate=0.075, num_leaves=32, subsample=0.6
-
-# Model 2: Aggressive approach  
-learning_rate=0.1, num_leaves=24, subsample=0.5
-
-# Additional models with different configurations
-```
-
-**Ensemble Blending**: Weighted combination of model predictions:
-
-```python
-ensemble_weights = {
-    'score_1': 2.0,
-    'score_2': 0.5, 
-    'score_3': 3.0,
-    'score_4': 1.0,
-    'score_5': 3.0,
-    'score_6': 1.5
-}
-```
-
-### 4. Advanced Time Series Features
-
-**Next Click Features**: Calculate time intervals between consecutive clicks:
-- Next click time for same user-device combinations
-- Alternative grouping by IP-app pairs
-- Handles missing values with -1 flag
-
-**Running Encodings**: Create target encoding features:
-- IP-based running averages
-- IP-app combination running averages
-- Proper handling of data leakage
-
-## 📁 Project Structure
-
-```
+```text
 talking/
-├── src/                    # Source code modules
-│   ├── __init__.py        # Package initialization
-│   ├── core/              # Core configuration
-│   │   ├── __init__.py
-│   │   └── config.py      # Configuration management
-│   ├── data/              # Data processing
-│   │   ├── __init__.py
-│   │   ├── data_utils.py  # Data processing utilities
-│   │   └── preprocessing.py # Data preprocessing pipeline
-│   ├── models/            # Model architectures
-│   │   ├── __init__.py
-│   │   ├── models.py      # Model classes and ensemble
-│   │   └── trainer.py     # Training utilities
-│   └── pipeline.py        # Main pipeline orchestration
-├── main.py               # Command-line interface
-├── example_usage.py      # Usage examples
-├── requirements.txt      # Dependencies
-├── setup.py             # Package installation
-└── README.md            # This file
+├── README.md                    # Solution write-up and execution guide
+├── main.py                      # CLI for full and individual pipeline stages
+├── dry_run.py                   # Synthetic CSV generation and end-to-end checks
+├── example_usage.py             # Runnable synthetic or real-data API example
+├── requirements.txt             # Runtime dependencies
+├── setup.py                     # Package metadata and console entry point
+├── MANIFEST.in                  # Dependencies and examples in source distributions
+├── .gitignore                   # Local generated-data and build exclusions
+└── src/
+    ├── __init__.py              # Public Config and pipeline exports
+    ├── pipeline.py              # Feature joins, training, predictions, blending
+    ├── core/
+    │   ├── __init__.py          # Configuration export
+    │   └── config.py            # Paths, time filters, LightGBM settings, weights
+    ├── data/
+    │   ├── __init__.py          # Data utility exports
+    │   ├── data_utils.py        # Typed loading, splitting, aggregate features
+    │   └── preprocessing.py     # Processed tables and supplement event matching
+    └── models/
+        ├── __init__.py          # Model and trainer exports
+        ├── models.py           # LightGBM persistence and ensemble blending
+        └── trainer.py          # AUC evaluation, importance, prediction CSVs
 ```
 
-## 🛠️ Installation
+## How to run
 
-### Prerequisites
-- Python 3.7+
-- 8GB+ RAM (recommended for full dataset)
-- 20GB+ disk space
-
-### Install Dependencies
+Use Python 3.11 or newer, from this folder:
 
 ```bash
-# Clone the repository
-git clone https://github.com/ujjwal-sharma/talkingdata-fraud-detection.git
-cd talkingdata-fraud-detection
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Optional: Install in development mode
-pip install -e .
+python -m pip install -r requirements.txt
+python dry_run.py
 ```
 
-### Data Setup
+The dry run writes competition-shaped CSVs to `sample_data/` and artifacts to
+`dry_run_output/`. It trains both models on CPU with a tiny configuration and
+checks preprocessing, every aggregate family, saved-model reloads, validation,
+feature ordering, blending, and submission writing. It needs no downloaded model
+weights and skips no pipeline stage. `python example_usage.py` runs the same example.
 
-1. Download the competition data from [Kaggle](https://www.kaggle.com/c/talkingdata-adtracking-fraud-detection/data)
-2. Place the following files in `data/download/`:
-   - `train.csv`
-   - `test.csv`
-   - `test_supplement.csv`
+For real data, download the CSVs from the linked Kaggle competition and arrange:
 
-## 🚀 Quick Start
-
-### Basic Usage
+```text
+data/download/
+├── train.csv
+├── test.csv
+└── test_supplement.csv
+```
 
 ```bash
-# Run complete pipeline
-python main.py --mode full --data-dir ../data
-
-# Run individual steps
-python main.py --mode preprocess --data-dir ../data
-python main.py --mode train --data-dir ../data
-python main.py --mode predict --data-dir ../data
+python main.py --mode full --data-dir data --num-threads 4
+# Alternatively keep raw CSVs in a separate directory:
+python main.py --mode full --data-dir data --raw-data-dir /path/to/csvs
+# Separate stages, using the same output directory:
+python main.py --mode preprocess --data-dir data
+python main.py --mode train --data-dir data
+python main.py --mode predict --data-dir data
+python main.py --mode evaluate --data-dir data
+python main.py --mode submit --data-dir data
 ```
 
-### Programmatic Usage
+`--num-boost-round` controls training length; `--skip-preprocess` reuses processed
+inputs during a full run. `train` prepares missing intermediate datasets as needed.
+Prediction and evaluation reload saved boosters in a fresh process.
+The final output is `data/submissions/final_submission.csv` with columns
+`click_id,is_attributed`. Intermediate data, feature tables, models, validation
+scores, and per-model submissions remain under the selected data directory.
 
-```python
-from src.core import Config
-from src.pipeline import TalkingDataPipeline
+For Python callers, use `Config(data_dir="data", raw_data_dir="/path/to/csvs")`
+and `TalkingDataPipeline(config).run_full_pipeline()`.
+The real-data path reads CSVs and performs group-bys in memory; it does not
+implement streaming. Full competition scale requires capacity planning beyond
+what the tiny CPU run verifies.
 
-# Create configuration
-config = Config()
-config.DATA_DIR = Path("../data")
+## Lessons / what I'd do differently
 
-# Create pipeline
-pipeline = TalkingDataPipeline(config)
-
-# Run complete pipeline
-submission = pipeline.run_full_pipeline()
-
-print(f"Generated {len(submission)} predictions")
-```
-
-### Custom Configuration
-
-```python
-# Customize configuration
-config = Config()
-config.KEEP_HOURS = [4, 5, 9, 10, 13, 14]  # Focus on specific hours
-config.LGB_PARAMS['model_1']['learning_rate'] = 0.05
-
-# Run with custom settings
-pipeline = TalkingDataPipeline(config)
-submission = pipeline.run_full_pipeline()
-```
-
-## 📊 Results and Performance
-
-### Model Performance
-- **Validation AUC**: 0.9785+ (ensemble)
-- **Individual Models**: 0.9750+ - 0.9780+
-- **Feature Count**: 50+ engineered features
-- **Training Time**: ~2-4 hours on modern hardware
-
-### Key Insights
-1. **Time-based Features**: Hour and day features were crucial for temporal patterns
-2. **IP-based Features**: IP counts and combinations showed strong predictive power
-3. **User Behavior**: Device-OS combinations provided valuable user context
-4. **Ensemble Benefits**: Combining multiple models improved robustness
-
-## 🔧 Advanced Usage
-
-### Feature Engineering
-
-```python
-from src.data.data_utils import FeatureEngineer
-
-# Create custom features
-feature_engineer = FeatureEngineer(config)
-count_features = feature_engineer.create_count_features(data)
-unique_features = feature_engineer.create_unique_features(data)
-```
-
-### Model Training
-
-```python
-from src.models.trainer import ModelTrainer
-
-# Train custom model
-trainer = ModelTrainer(config)
-metrics = trainer.train_single_model('custom_model', train_data, valid_data)
-```
-
-### Ensemble Creation
-
-```python
-from src.models.models import ModelEnsemble
-
-# Create custom ensemble
-ensemble = ModelEnsemble(config)
-ensemble.load_models(['model_1', 'model_2'])
-predictions = ensemble.predict_ensemble(test_data)
-```
-
-## 📈 Feature Importance Analysis
-
-The most important features identified:
-
-1. **ip_cnt**: Total clicks from IP address
-2. **ip_day_hour_cnt**: IP clicks per day-hour combination
-3. **ip_app_cnt**: IP-app combination clicks
-4. **hour**: Hour of day feature
-5. **user_count**: User (IP-device-OS) click count
-6. **ip_app_os_cnt**: IP-app-OS combination clicks
-7. **app_cnt**: Total app clicks
-8. **device_cnt**: Device type clicks
-9. **channel_cnt**: Channel clicks
-10. **ip_hour_os_cnt**: IP-hour-OS combination clicks
-
-## 🎯 Key Innovations
-
-### 1. Temporal Data Filtering
-- Focused on specific hours with higher fraud rates
-- Used date-based validation split for realistic evaluation
-- Implemented time-aware feature engineering
-
-### 2. Memory-Efficient Processing
-- Optimized data types for categorical features
-- Chunked processing for large datasets
-- Feather format for fast I/O operations
-
-### 3. Multi-Level Feature Engineering
-- Created features at multiple granularities
-- Combined categorical variables effectively
-- Implemented ranking and unique count features
-
-### 4. Robust Ensemble Strategy
-- Trained diverse models with different parameters
-- Used weighted ensemble based on validation performance
-- Implemented proper cross-validation methodology
-
-## 🔍 Technical Challenges Solved
-
-### 1. Memory Management
-- **Challenge**: 370M+ samples requiring 20GB+ memory
-- **Solution**: Optimized data types, chunked processing, Feather storage
-
-### 2. Class Imbalance
-- **Challenge**: 0.2% positive rate requiring careful handling
-- **Solution**: Scale_pos_weight parameter, stratified sampling
-
-### 3. Temporal Leakage
-- **Challenge**: Time series data prone to data leakage
-- **Solution**: Strict date-based splits, proper feature engineering
-
-### 4. Feature Engineering at Scale
-- **Challenge**: Creating meaningful features from categorical data
-- **Solution**: Multi-level counting, ranking, and unique features
-
-## 📚 Methodology
-
-### Data Preprocessing Pipeline
-1. **Load and Validate**: Load raw CSV files with optimized data types
-2. **Time Features**: Extract hour, day, and time-based features
-3. **Filtering**: Apply time and date-based filters
-4. **Splitting**: Create train/validation split based on dates
-5. **Optimization**: Reduce memory usage with appropriate data types
-
-### Feature Engineering Pipeline
-1. **Count Features**: Create counting features at multiple levels
-2. **Unique Features**: Calculate unique counts for combinations
-3. **Ranking Features**: Rank categorical variables by frequency
-4. **User Features**: Create user-based behavioral features
-5. **Time Features**: Engineer temporal and sequence features
-
-### Modeling Pipeline
-1. **Multiple Models**: Train 6 different LightGBM configurations
-2. **Cross-Validation**: Use time-based validation strategy
-3. **Hyperparameter Tuning**: Optimize model parameters
-4. **Ensemble**: Combine predictions with learned weights
-5. **Evaluation**: Comprehensive model evaluation and analysis
-
-## 🏅 Competition Results
-
-- **Final Ranking**: Top 10% (Silver Medal)
-- **Public AUC**: 0.9785+
-- **Private AUC**: 0.9780+
-- **Key Factors**: Feature engineering, ensemble strategy, temporal handling
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-### Development Setup
-
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Format code
-black src/
-
-# Lint code
-flake8 src/
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [TalkingData](https://www.talkingdata.com/) for hosting the competition
-- [Kaggle](https://www.kaggle.com/) for providing the platform
-- The open-source community for excellent ML libraries
-- Fellow competitors for insights and discussions
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-*This project demonstrates advanced machine learning techniques for large-scale fraud detection, featuring sophisticated feature engineering, ensemble learning, and efficient data processing pipelines.*
+- I would save the exact training snapshot, feature manifest, and all model
+  configurations alongside the final submission to make historical reproduction precise.
+- I would compare this holdout with a strictly forward validation split and
+  separately measure the value of test-context aggregates.
+- I would partition large aggregations and benchmark peak memory before scaling
+  the pandas implementation to the full dataset.
+- For deployment, I would use past-only feature computation and evaluate probability
+  calibration instead of retaining batch-dependent maximum normalization.

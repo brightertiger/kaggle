@@ -1,9 +1,9 @@
-import os
 from pathlib import Path
+import torch
 
 class Config:
     SEED = 42
-    DEVICE = 'cuda:0'
+    DEVICE = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     
     # Data paths
     DATA_DIR = Path('data')
@@ -21,15 +21,20 @@ class Config:
     NUM_EPOCHS = 20
     LEARNING_RATE = 3e-5
     WEIGHT_DECAY = 0.0
+    NUM_WORKERS = 3
+    ACCUMULATION_STEPS = 2
+    USE_APEX = True  # Used only when NVIDIA Apex and CUDA are available.
     
     # Model architecture
     MODEL_NAME = 'efficientnet-b5'
     NUM_CLASSES = 4
     METADATA_DIM = 13
+    PRETRAINED = True
     
     # Data augmentation
     CUTOUT_HOLES = 16
     CUTOUT_SIZE = 64
+    HAIR_MASK_DIR = None  # Optional grayscale masks: white keeps pixels, black hides hair.
     
     # Loss function
     POS_WEIGHT = 4.0
@@ -53,3 +58,15 @@ class Config:
         'nevus': 2, 
         'keratosis': 3
     }
+
+    def __init__(self, **overrides):
+        for name, value in overrides.items():
+            if not name.isupper() or not hasattr(type(self), name):
+                raise ValueError(f'Unknown configuration option: {name}')
+            setattr(self, name, value)
+
+    def as_dict(self):
+        # Plain values keep checkpoints compatible with torch.load(weights_only=True).
+        return {name: str(value) if isinstance(value, Path) else value
+                for name in dir(self) if name.isupper()
+                for value in [getattr(self, name)]}

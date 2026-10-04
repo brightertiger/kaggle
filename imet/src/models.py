@@ -3,22 +3,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 from pretrainedmodels import se_resnext50_32x4d, se_resnext101_32x4d
+from pretrainedmodels.models.senet import SENet, SEResNeXtBottleneck
 
 from .config import Config
 
 
 class ResNextClassifier(nn.Module):
-    def __init__(self, model_name: str, num_classes: int, freeze_backbone: bool = False):
+    def __init__(self, model_name: str, num_classes: int, freeze_backbone: bool = False,
+                 pretrained: bool = True):
         super().__init__()
         self.model_name = model_name
         self.num_classes = num_classes
         self.freeze_backbone = freeze_backbone
         
         if model_name == 'resnext50':
-            self.backbone = se_resnext50_32x4d(num_classes=1000, pretrained='imagenet')
+            self.backbone = se_resnext50_32x4d(num_classes=1000, pretrained='imagenet' if pretrained else None)
             self.feature_dim = 2048
         elif model_name == 'resnext101':
-            self.backbone = se_resnext101_32x4d(num_classes=1000, pretrained='imagenet')
+            self.backbone = se_resnext101_32x4d(num_classes=1000, pretrained='imagenet' if pretrained else None)
+            self.feature_dim = 2048
+        elif model_name == 'resnext_tiny':
+            if pretrained:
+                raise ValueError('resnext_tiny is a smoke-test model; set pretrained=False')
+            # Same SE-ResNeXt blocks, with one block per stage for CPU smoke tests.
+            self.backbone = SENet(
+                SEResNeXtBottleneck, [1, 1, 1, 1], groups=32, reduction=16,
+                dropout_p=None, inplanes=64, input_3x3=False,
+                downsample_kernel_size=1, downsample_padding=0,
+            )
             self.feature_dim = 2048
         else:
             raise ValueError(f"Unsupported model: {model_name}")
@@ -48,6 +60,18 @@ class ResNextClassifier(nn.Module):
     
     def forward(self, x):
         return self.backbone(x)
+
+    def train(self, mode=True):
+        super().train(mode)
+        if mode and self.freeze_backbone:
+            for module in self.backbone.modules():
+                if isinstance(module, nn.BatchNorm2d):
+                    module.eval()
+        return self
+
+    def freeze(self):
+        self.freeze_backbone = True
+        self._setup_freeze()
     
     def unfreeze_backbone(self):
         for param in self.backbone.parameters():
@@ -59,7 +83,7 @@ class FocalLoss(nn.Module):
     def __init__(self, gamma: float = 2.0, alpha: Optional[torch.Tensor] = None):
         super().__init__()
         self.gamma = gamma
-        self.alpha = alpha
+        self.register_buffer('alpha', alpha)
     
     def forward(self, logits, targets):
         targets = targets.float()
@@ -71,11 +95,10 @@ class FocalLoss(nn.Module):
         invprobs = F.logsigmoid(-logits * (targets * 2.0 - 1.0))
         loss = (invprobs * self.gamma).exp() * loss
         
-        if len(loss.size()) == 2:
-            loss = loss.sum(dim=1)
-        
         if self.alpha is not None:
             loss = loss * self.alpha
+        if len(loss.size()) == 2:
+            loss = loss.sum(dim=1)
         
         return loss.mean()
 
@@ -101,11 +124,12 @@ class F2Loss(nn.Module):
 
 class ModelFactory:
     @staticmethod
-    def create_model(config: Config) -> ResNextClassifier:
+    def create_model(config: Config, pretrained: Optional[bool] = None) -> ResNextClassifier:
         return ResNextClassifier(
             model_name=config.model_name,
             num_classes=config.num_classes,
-            freeze_backbone=config.freeze_backbone
+            freeze_backbone=config.freeze_backbone,
+            pretrained=config.pretrained if pretrained is None else pretrained,
         )
     
     @staticmethod
@@ -121,7 +145,7 @@ class ModelFactory:
 
 
 def load_model_checkpoint(model: ResNextClassifier, checkpoint_path: str) -> dict:
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
     model.load_state_dict(checkpoint['model_state_dict'])
     
     return {

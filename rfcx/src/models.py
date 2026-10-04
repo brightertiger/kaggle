@@ -1,8 +1,6 @@
 import timm
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional
 from .config import Config
 
 class AudioClassificationModel(nn.Module):
@@ -11,14 +9,11 @@ class AudioClassificationModel(nn.Module):
         self.config = config
         self.model_name = model_name
         
-        if model_name == "res2net50_26w_4s":
-            self.backbone = timm.create_model("res2net50_26w_4s", pretrained=config.model.pretrained)
-            self.backbone.fc = nn.Linear(2048, config.model.num_classes)
-        elif model_name == "resnest50d":
-            self.backbone = timm.create_model("resnest50d", pretrained=config.model.pretrained)
-            self.backbone.fc = nn.Linear(2048, config.model.num_classes)
-        else:
-            raise ValueError(f"Unsupported model: {model_name}")
+        self.backbone = timm.create_model(
+            config.model.backbone or model_name,
+            pretrained=config.model.pretrained,
+            num_classes=config.model.num_classes,
+        )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.backbone(x)

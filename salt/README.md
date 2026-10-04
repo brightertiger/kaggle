@@ -1,411 +1,244 @@
-# Salt Identification from Aerial Images
+# [TGS Salt Identification Challenge](https://www.kaggle.com/competitions/tgs-salt-identification-challenge)
 
-A comprehensive deep learning solution for identifying salt deposits in aerial images, developed for the [TGS Salt Identification Challenge](https://www.kaggle.com/c/tgs-salt-identification-challenge) on Kaggle.
+**Final rank: 292 / 3,219 teams · Bronze medal**
 
-## 🏆 Challenge Overview
+I approached salt identification as binary semantic segmentation: preserve the
+small-scale seismic structure, learn a mask with a U-Net, and tune the final
+mask decision against held-out images.
 
-The TGS Salt Identification Challenge aimed to identify salt deposits beneath the Earth's surface using seismic imaging data. This is a critical task in oil and gas exploration where accurate salt identification can significantly impact drilling decisions and resource estimation.
+This folder is a runnable reconstruction of my migrated solution. The migration
+retained the orchestration and configuration but omitted the data and model
+modules. Those modules have been restored around the documented method.
+The rank above comes from the portfolio's [competition table](../README.md);
+I do not claim that this reconstruction reproduces the historical leaderboard score.
 
-### Problem Statement
-- **Task**: Binary segmentation of salt deposits in seismic images
-- **Input**: 101×101 pixel seismic images
-- **Output**: Run-Length Encoded (RLE) binary masks
-- **Dataset**: ~4,000 training images with varying salt coverage
-- **Evaluation**: Intersection over Union (IoU) metric
+## Problem
 
-### Challenge Characteristics
-- **Class Imbalance**: Highly imbalanced dataset with varying salt coverage percentages
-- **Small Objects**: Salt deposits can be very small or cover large portions of images
-- **Seismic Data**: Specialized domain requiring careful preprocessing
-- **Limited Data**: Small dataset requiring effective data augmentation and regularization
+The task was to identify salt deposits in seismic image patches.
+These are subsurface seismic images, not aerial photographs.
+For each test image I needed to submit a binary mask as a run-length encoded string.
 
-## 🚀 Solution Architecture
+The competition score averages per-image precision across IoU thresholds.
+The evaluator implements thresholds from 0.50 through 0.95: a predicted mask
+passes a threshold when its intersection-over-union exceeds that threshold.
+An empty prediction on an empty target receives full credit.
+This makes false positive salt on empty images especially costly.
 
-### 1. Advanced U-Net Architecture
+Salt boundaries can be ambiguous, and foreground coverage varies considerably.
+A model must recognize both broad regions and small deposits while preserving
+boundaries in a low-resolution input.
 
-**Squeeze-and-Excitation U-Net with ResNet34 Encoder**: Custom U-Net implementation with attention mechanisms:
+## Data
 
-```python
-# Key architectural features
-- ResNet34 pretrained encoder
-- Squeeze-and-Excitation (SE) attention modules
-- Skip connections with concatenation
-- Dropout regularization (0.25)
-- Spatial and Channel SE blocks
+- Inputs are **101 × 101** seismic PNGs, with approximately **4,000** training
+  images documented in the original folder README.
+- Training masks are paired PNGs; foreground pixels represent salt.
+- `train.csv` contains `id` and `rle_mask`; training uses the paired PNG masks.
+- `depths.csv` contains `id` and `z` for the images. I retain depth in the
+  processed manifests; the current network consumes image pixels only.
+- `sample_submission.csv`, when present, defines test ID order. Otherwise the
+  pipeline derives that order from sorted test image filenames.
+
+Empty masks and large differences in salt coverage make an unexamined random
+split risky. Seismic textures and uncertain edges also make pixel accuracy a
+poor guide to segmentation quality. I make no claim of exploiting a data leak.
+
+## Approach
+
+### Validation and preprocessing
+
+I use coverage-based stratified cross-validation, with five folds by default.
+The restored preprocessor distinguishes sparse masks, vertically uniform masks,
+and increasing coverage bands. It records each image's coverage and fold.
+Rare strata are pooled; if stratification is still impossible on a small input,
+it explicitly warns and falls back to seeded K-fold splitting.
+
+Images are converted to three channels for the pretrained encoder and normalized
+with ImageNet statistics. The default path preserves the native image resolution
+and reflect-pads to **128 × 128**, with **14** pixels before and **13** after
+on each spatial axis. Masks receive zero padding.
+
+I apply horizontal flips jointly to images and masks during training.
+Validation and test loaders preserve their manifest order and use no random
+augmentation. Coverage is a splitting feature, not an input to the network.
+
+```mermaid
+flowchart LR
+    A[Seismic PNGs and masks] --> B[Coverage strata and folds]
+    B --> C[Normalize, pad, paired flips]
+    C --> D[Encoder and U-Net decoder]
+    D --> E[Lovasz hinge training]
+    E --> F[Best checkpoint per fold]
+    F --> G[Optional horizontal-flip TTA]
+    G --> H[Crop padding and restore native size]
+    H --> I[OOF threshold search]
+    H --> J[Average test logits across folds]
+    I --> K[Threshold and small-mask filter]
+    J --> K
+    K --> L[Column-major RLE submission]
 ```
 
-**Key Design Decisions**:
-- Transfer learning from ImageNet pretrained ResNet34
-- SE attention for better feature representation
-- Skip connections for fine-grained detail preservation
-- Aggressive dropout for regularization
+### Model and learned features
 
-### 2. Sophisticated Loss Functions
+The default `seresnet34` model combines an ImageNet-pretrained ResNet34 encoder
+with a U-Net decoder and spatial/channel squeeze-and-excitation attention.
+Here, the name refers to SCSE in the decoder; the encoder is a standard ResNet34.
+Skip connections carry spatial detail from encoder stages into the decoder.
+Dropout regularizes the deepest features.
 
-**Lovász Loss**: Primary loss function optimized for IoU metric:
+`resnet34` retains the same encoder without decoder attention.
+`vgg11` provides the documented alternative encoder.
+All variants return a single channel of logits at the padded input resolution.
+There is no separate hand-crafted feature matrix: the encoder learns image features.
 
-```python
-class LovaszLoss(nn.Module):
-    def forward(self, pred, target):
-        # Direct optimization of IoU metric
-        # Better handling of class imbalance
-        return lovasz_hinge_loss(pred, target)
-```
+The restored decoder and coverage rules are implementation choices guided by the
+surviving README, not recovered copies of the missing competition source.
+Pretrained initialization uses torchvision's
+[weights API](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet34.html).
 
-**Alternative Loss Functions**:
-- **Dice Loss**: Combined BCE + Dice for balanced training
-- **BCE Loss**: Binary cross-entropy baseline
-- **Focal Loss**: For handling extreme class imbalance
+### Training
 
-### 3. Advanced Data Augmentation
+I keep Lovász hinge as the default loss to align training with overlap quality.
+Its sorted-error formulation follows the
+[authors' reference implementation](https://github.com/bermanmaxim/LovaszSoftmax).
+BCE, BCE plus Dice, and focal loss are also available through `Config.LOSS_TYPE`.
+Loss excludes padding; validation scoring uses native-size masks.
 
-**Multi-Scale Augmentation Pipeline**:
-- Horizontal flipping with 50% probability
-- Image padding (14×13 pixels) for edge handling
-- Test-Time Augmentation (TTA) for inference
-- Stratified K-fold based on salt coverage percentage
+Training uses Adam, weight decay, learning-rate reduction after a validation
+plateau, and early stopping. The first finite validation result can save a
+checkpoint, including a zero score. Subsequent saves require improvement.
 
-**Stratified Sampling**: 5-fold cross-validation based on salt coverage categories:
-- Category 0: Very sparse (< 8 pixels)
-- Category 1: Uniform patterns
-- Categories 2-6: Low to very high coverage (0-67%+)
+`--resume` reloads the best saved model and optimizer and continues at the next
+epoch. It restarts patience counters; it is not an exact replay of an interrupted
+run. The restored trainer uses ordinary full-precision updates.
 
-### 4. Training Strategy
+### Inference and post-processing
 
-**Optimization**:
-- Adam optimizer with learning rate 1e-3
-- Weight decay 1e-4 for regularization
-- Learning rate reduction on plateau
-- Early stopping with patience
+I optionally average original and horizontally flipped predictions after
+undoing the flip. Padding is removed before evaluation or submission.
+If a smaller working image size was requested, logits are resized back to the
+native mask dimensions before thresholding.
 
-**Training Features**:
-- 5-fold cross-validation
-- Model checkpointing
-- Gradient accumulation
-- Mixed precision training support
+The evaluator selects a shared logit cutoff using out-of-fold predictions.
+Test logits are averaged across all configured folds, then thresholded.
+The default small-mask rule clears predictions containing at most **25** pixels;
+the same rule is applied during evaluation.
+RLE uses column-major traversal and one-based start positions.
 
-## 📁 Project Structure
+Artifacts are separated by model name and by the tiny-model flag.
+Submission requires every configured fold and rejects mismatched TTA settings,
+changed checkpoints, or incompatible prediction shapes.
 
-```
+## What mattered most
+
+These are the priorities preserved from the solution notes; I have no retained
+ablation logs that justify assigning an individual score gain to each one.
+
+- **Spatial detail:** U-Net skip connections preserve structure through downsampling.
+- **Overlap-aware training:** Lovász hinge targets the kind of error that IoU measures.
+- **Representative validation:** coverage strata expose empty-mask and dense-mask behavior.
+- **Decision calibration:** native-size OOF scoring keeps threshold selection aligned
+  with the masks actually submitted.
+- **Prediction averaging:** fold ensembling and flip TTA combine complementary predictions.
+
+## Repository layout
+
+```text
 salt/
-├── src/                    # Source code modules (organized by functionality)
-│   ├── __init__.py        # Package initialization and exports
-│   ├── core/              # Core configuration and utilities
-│   │   ├── __init__.py
-│   │   └── config.py      # Configuration management
-│   ├── data/              # Data processing and analysis
-│   │   ├── __init__.py
-│   │   ├── data_utils.py  # Dataset classes and data loading
-│   │   └── preprocessing.py # Data preprocessing pipeline
-│   ├── models/            # Model architectures and loss functions
-│   │   ├── __init__.py
-│   │   ├── models.py      # Model architectures
-│   │   └── loss.py        # Custom loss functions
-│   ├── training/          # Training utilities and optimizers
-│   │   ├── __init__.py
-│   │   └── trainer.py     # Training logic
-│   ├── inference/         # Model inference and validation
-│   │   ├── __init__.py
-│   │   ├── predictor.py   # Inference and prediction
-│   │   └── evaluator.py   # Model validation utilities
-│   └── pipeline/          # Main pipeline orchestration
-│       ├── __init__.py
-│       └── pipeline.py    # Main pipeline orchestration
-├── main.py                # Command-line interface
-├── example_usage.py       # Usage examples and tutorials
-├── requirements.txt       # Python dependencies
-├── setup.py              # Package setup
-├── .gitignore            # Git ignore rules
-└── README.md             # This file
+├── README.md                    # Method, provenance, and running instructions
+├── main.py                      # CLI for each pipeline stage
+├── dry_run.py                   # Synthetic data and full CPU smoke run
+├── example_usage.py             # Explicitly selected programmatic examples
+├── requirements.txt             # Runtime dependencies
+├── setup.py                     # Package metadata and CLI entry point
+├── .gitignore                   # Excludes local datasets and run artifacts
+├── tests/test_contracts.py       # Geometry, metrics, losses, checkpoints, backbones
+└── src/
+    ├── __init__.py              # Public pipeline/configuration exports
+    ├── core/
+    │   ├── __init__.py          # Configuration export
+    │   └── config.py            # Defaults, validation, and configurable paths
+    ├── data/
+    │   ├── __init__.py          # Dataset/preprocessor exports
+    │   ├── preprocessing.py     # Input validation and coverage folds
+    │   └── data_utils.py        # PNG loading, transforms, and native-size restoration
+    ├── models/
+    │   ├── __init__.py          # Model/loss exports
+    │   ├── models.py            # U-Net encoders, SCSE decoder, tiny smoke model
+    │   └── loss.py              # Lovasz, Dice/BCE, focal, and competition metric
+    ├── training/
+    │   ├── __init__.py          # Trainer export
+    │   └── trainer.py          # Optimization, validation, and checkpoints
+    ├── inference/
+    │   ├── __init__.py          # Predictor/evaluator exports
+    │   ├── predictor.py        # TTA, ensemble, and submission serialization
+    │   └── evaluator.py        # OOF scoring and threshold search
+    └── pipeline/
+        ├── __init__.py          # Pipeline export
+        └── pipeline.py         # End-to-end orchestration
 ```
 
-## 🛠️ Installation
+## How to run
 
-### Prerequisites
-- Python 3.7+
-- CUDA-capable GPU (recommended)
-- 8GB+ RAM
-- 10GB+ storage for dataset
-
-### Setup
-
-1. **Clone the repository**:
-```bash
-git clone <repository-url>
-cd salt
-```
-
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
-
-3. **Download the dataset**:
-   - Download from [Kaggle competition page](https://www.kaggle.com/c/tgs-salt-identification-challenge/data)
-   - Extract to `../data/download/` directory
-   - Expected structure:
-   ```
-   data/download/
-   ├── train.csv
-   ├── depths.csv
-   ├── train/
-   │   ├── images/
-   │   └── masks/
-   └── test/
-       └── images/
-   ```
-
-## 🚀 Usage
-
-### Quick Start
-
-**Complete Pipeline**:
-```bash
-python main.py --mode full --model seresnet34 --epochs 50
-```
-
-**Step-by-Step**:
-```bash
-# 1. Preprocess data
-python main.py --mode preprocess
-
-# 2. Train models
-python main.py --mode train --model seresnet34 --epochs 50
-
-# 3. Generate predictions
-python main.py --mode predict --model seresnet34
-
-# 4. Evaluate models
-python main.py --mode evaluate --model seresnet34
-
-# 5. Create submission
-python main.py --mode submit --model seresnet34
-```
-
-### Advanced Usage
-
-**Custom Configuration**:
-```python
-from src.core import Config
-from src.pipeline import SaltSegmentationPipeline
-
-# Custom configuration
-config = Config()
-config.NUM_EPOCHS = 100
-config.BATCH_SIZE_TRAIN = 16
-config.LEARNING_RATE = 0.0005
-config.IMAGE_SIZE = 101
-
-# Run pipeline
-pipeline = SaltSegmentationPipeline(config)
-submission_df = pipeline.run_full_pipeline(model_name='seresnet34')
-```
-
-**Single Fold Training**:
-```python
-from src.training import ModelTrainer
-from src.data import create_data_loaders
-from src.core import Config
-
-config = Config()
-train_loader, valid_loader = create_data_loaders(1, config)
-trainer = ModelTrainer(1, config)
-history = trainer.train("seresnet34", train_loader, valid_loader)
-```
-
-### Command Line Options
+Use Python **3.11** and install the dependencies from this folder:
 
 ```bash
+python -m pip install -r requirements.txt
+```
+
+Extract competition files into the following layout. `--data-dir` points to
+`data`, the parent of `download`; outputs default to this folder's `output/`.
+
+```text
+data/download/
+├── train.csv
+├── depths.csv
+├── sample_submission.csv       # Optional: test IDs can be derived from PNGs
+├── train/images/<id>.png
+├── train/masks/<id>.png
+└── test/images/<id>.png
+```
+
+Run preprocessing, all folds, prediction, OOF evaluation, and submission together:
+
+```bash
+python main.py --mode full --data-dir ./data --output-dir ./output \
+  --model seresnet34 --epochs 200 --batch-size 32 --use-tta
+```
+
+The pretrained encoder may download ImageNet weights on its first training run.
+Use `--no-pretrained` for random initialization, or `--device cpu` to force CPU.
+`--mode preprocess`, `train`, `predict`, `evaluate`, and `submit` run individual stages.
+`--fold` selects a fold only in training mode; prediction expects all folds.
+Keep data, output, model, fold, image-size, and TTA settings consistent across stages.
+Standalone `submit` uses the configured cutoff unless `--threshold` is supplied;
+`full` automatically uses the selected OOF cutoff.
+
+```bash
+python dry_run.py
+python -m unittest discover -s tests -v
 python main.py --help
+python example_usage.py model --tiny-model
 ```
 
-**Available options**:
-- `--mode`: preprocess, train, predict, evaluate, submit, full
-- `--model`: resnet34, seresnet34, vgg11
-- `--device`: cuda:0, cpu, auto
-- `--epochs`: Number of training epochs
-- `--batch-size`: Training batch size
-- `--lr`: Learning rate
-- `--fold`: Specific fold to train (1-5)
-- `--resume`: Resume training from checkpoint
-- `--use-tta`: Use Test Time Augmentation
-- `--data-dir`: Path to data directory
+The dry run writes **8** training and **3** test images with the real **101 × 101**
+layout under `sample_data/`. It runs **2** folds for **1** epoch on CPU, resizing
+working images to **25 × 25** and padding to **32 × 32**. A narrow random encoder
+exercises the U-Net/SCSE path without downloading weights.
+It covers every pipeline stage, including native-size evaluation and RLE checks;
+no stage is skipped. Its scores measure execution only, not model quality.
 
-## 📊 Results & Performance
+The output is `dry_run_output/submit/seresnet34_tiny_submission.csv`.
+Real runs write `output/submit/seresnet34_submission.csv`, along with processed
+manifests, per-fold checkpoints, and validation/test logits.
+Generated data and artifacts are ignored locally.
 
-### Model Performance
+## Lessons / what I'd do differently
 
-| Model | Validation IoU | Training Time | Parameters |
-|-------|---------------|---------------|------------|
-| ResNet34 U-Net | 0.7823 | ~4 hours | 21.3M |
-| SE-ResNet34 U-Net | **0.8112** | ~5 hours | 21.3M |
-| VGG11 U-Net | 0.7654 | ~3 hours | 9.2M |
-| Ensemble (5 folds) | **0.8209** | ~25 hours | - |
-
-### Key Insights
-
-1. **Squeeze-and-Excitation Attention**: SE modules provided significant improvement (+2.89% IoU) by allowing the model to focus on important features.
-
-2. **Lovász Loss**: Direct optimization of IoU metric was crucial for performance, outperforming BCE and Dice losses.
-
-3. **Stratified Cross-Validation**: Category-based folding prevented overfitting and provided reliable performance estimates.
-
-4. **Test-Time Augmentation**: Horizontal flip TTA provided consistent +0.5-1% improvement.
-
-5. **Threshold Optimization**: Careful threshold tuning (-0.18) was essential for optimal performance.
-
-### Competition Results
-
-- **Public Leaderboard**: 0.8209 IoU (Top 15%)
-- **Private Leaderboard**: 0.8156 IoU (Top 12%)
-- **Final Rank**: 89/3,234 teams
-
-## 🔬 Technical Deep Dive
-
-### Model Architecture Details
-
-**SE-ResNet34 U-Net Configuration**:
-- Input: 128×128×3 (padded from 101×101)
-- Encoder: ResNet34 (pretrained on ImageNet)
-- Decoder: Custom U-Net decoder with SE attention
-- Output: 128×128×1 (cropped to 101×101)
-- Parameters: 21.3M
-
-**Squeeze-and-Excitation Module**:
-```python
-class SCSEModule(nn.Module):
-    def __init__(self, channels, reduction=16):
-        # Channel SE: Global average pooling + FC layers
-        # Spatial SE: 1x1 convolution + sigmoid
-        self.cSE = nn.Sequential(...)
-        self.sSE = nn.Sequential(...)
-    
-    def forward(self, x):
-        return x * self.cSE(x) + x * self.sSE(x)
-```
-
-### Loss Function Analysis
-
-**Lovász Loss Advantages**:
-- Direct optimization of IoU metric
-- Better handling of class imbalance
-- Differentiable approximation of IoU
-- Superior to BCE + Dice combination
-
-**Loss Function Comparison**:
-| Loss Function | Validation IoU | Convergence |
-|---------------|---------------|-------------|
-| BCE | 0.7423 | Slow |
-| Dice + BCE | 0.7654 | Medium |
-| **Lovász** | **0.8112** | **Fast** |
-
-## 🧪 Experiments & Ablations
-
-### 1. Model Architecture Comparison
-
-| Architecture | Validation IoU | Training Time | Notes |
-|--------------|---------------|---------------|-------|
-| ResNet34 | 0.7823 | 4h | Baseline |
-| SE-ResNet34 | **0.8112** | 5h | +2.89% improvement |
-| VGG11 | 0.7654 | 3h | Faster but lower accuracy |
-| ResNet50 | 0.7891 | 6h | Slightly better than ResNet34 |
-
-### 2. Loss Function Comparison
-
-| Loss Function | Validation IoU | Convergence | Stability |
-|---------------|---------------|-------------|-----------|
-| BCE | 0.7423 | Slow | High |
-| Dice + BCE | 0.7654 | Medium | Medium |
-| Focal Loss | 0.7734 | Medium | Medium |
-| **Lovász** | **0.8112** | **Fast** | **High** |
-
-### 3. Data Augmentation Impact
-
-| Augmentation | Validation IoU | Improvement |
-|--------------|---------------|-------------|
-| No augmentation | 0.7456 | Baseline |
-| Horizontal flip | 0.7689 | +0.0233 |
-| Padding + flip | 0.7823 | +0.0367 |
-| TTA | **0.8112** | **+0.0656** |
-
-### 4. Cross-Validation Strategy
-
-| CV Strategy | Validation IoU | Std Dev | Notes |
-|-------------|---------------|---------|-------|
-| Random 5-fold | 0.7923 | 0.0234 | High variance |
-| **Stratified 5-fold** | **0.8112** | **0.0156** | **Lower variance** |
-
-## 📈 Future Improvements
-
-### 1. Advanced Architectures
-- **Vision Transformers**: Test ViT-based models for segmentation
-- **EfficientNet**: Explore EfficientNet-based encoders
-- **FPN/PSPNet**: Feature Pyramid Networks for multi-scale features
-
-### 2. Data Augmentation
-- **Geometric augmentations**: Rotation, scaling, elastic deformation
-- **Mixup/CutMix**: Advanced augmentation techniques
-- **Synthetic data generation**: GAN-based data augmentation
-
-### 3. Loss Functions
-- **Focal Loss**: Better handling of extreme class imbalance
-- **Boundary Loss**: Focus on object boundaries
-- **Multi-scale loss**: Loss at different resolution levels
-
-### 4. Ensemble Methods
-- **Model diversity**: Different architectures and preprocessing
-- **Stacking**: Train meta-learner on fold predictions
-- **Weighted blending**: Learn optimal combination weights
-
-### 5. Post-processing
-- **CRF**: Conditional Random Fields for refinement
-- **Morphological operations**: Clean up predictions
-- **Connected components**: Filter small regions
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-### Code Style
-
-- Follow PEP 8 guidelines
-- Use type hints where appropriate
-- Keep functions focused and modular
-- Add comprehensive error handling
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- **TGS**: For organizing the challenge and providing the dataset
-- **Kaggle Community**: For insights and discussions
-- **PyTorch Team**: For the excellent deep learning framework
-- **Computer Vision Community**: For research and architectural innovations
-
-## 📚 References
-
-1. [TGS Salt Identification Challenge](https://www.kaggle.com/c/tgs-salt-identification-challenge)
-2. [U-Net: Convolutional Networks for Biomedical Image Segmentation](https://arxiv.org/abs/1505.04597)
-3. [Squeeze-and-Excitation Networks](https://arxiv.org/abs/1709.01507)
-4. [The Lovász-Softmax loss: A tractable surrogate for the optimization of the intersection-over-union measure in neural networks](https://arxiv.org/abs/1705.08790)
-5. [Deep Learning for Seismic Data Analysis](https://www.nature.com/articles/s41598-019-43541-8)
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
----
-
-**Note**: This project is for educational and research purposes. Always consult domain experts for actual geological and seismic interpretation decisions.
+- I would preserve fold assignments, experiment logs, and the exact original model
+  source alongside every competition submission; reconstruction leaves uncertainty.
+- I would keep geometry and RLE checks close to inference: plausible-looking masks
+  can still be serialized incorrectly.
+- I would assess depth and correlated seismic structure explicitly when designing
+  validation, rather than treating coverage balance as sufficient evidence.
+- I would retain controlled ablations before attributing gains to attention or TTA.

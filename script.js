@@ -1,5 +1,23 @@
 // Minimal Portfolio JavaScript
 document.addEventListener('DOMContentLoaded', function() {
+    const filters = document.querySelector('.project-filters');
+    const cards = Array.from(document.querySelectorAll('.project-card'));
+    const status = document.querySelector('.filter-status');
+    if (filters && status) {
+        filters.hidden = false;
+        const buttons = filters.querySelectorAll('button[data-filter]');
+        buttons.forEach(button => {
+            button.addEventListener('click', function() {
+                const tier = this.dataset.filter;
+                buttons.forEach(item => item.setAttribute('aria-pressed', String(item === this)));
+                cards.forEach(card => {
+                    const isOther = !['gold', 'silver', 'bronze'].some(medal => card.classList.contains(medal));
+                    card.hidden = !(tier === 'all' || (tier === 'other' ? isOther : card.classList.contains(tier)));
+                });
+                status.textContent = `${cards.filter(card => !card.hidden).length} competitions shown`;
+            });
+        });
+    }
     
     // Smooth scrolling for anchor links
     const links = document.querySelectorAll('a[href^="#"]');
@@ -24,23 +42,25 @@ document.addEventListener('DOMContentLoaded', function() {
         rootMargin: '0px 0px -50px 0px'
     };
     
-    const observer = new IntersectionObserver(function(entries) {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.style.opacity = '1';
-                entry.target.style.transform = 'translateY(0)';
-            }
+    if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver(function(entries) {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, observerOptions);
+
+        // Observe sections for fade-in effect
+        const sections = document.querySelectorAll('section');
+        sections.forEach(section => {
+            section.style.opacity = '0';
+            section.style.transform = 'translateY(20px)';
+            section.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+            observer.observe(section);
         });
-    }, observerOptions);
-    
-    // Observe sections for fade-in effect
-    const sections = document.querySelectorAll('section');
-    sections.forEach(section => {
-        section.style.opacity = '0';
-        section.style.transform = 'translateY(20px)';
-        section.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
-        observer.observe(section);
-    });
+    }
     
     // Add loading state
     window.addEventListener('load', function() {

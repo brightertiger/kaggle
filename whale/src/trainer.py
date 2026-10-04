@@ -3,12 +3,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-from torch.autograd import Variable
-from collections import OrderedDict
 from typing import Optional, Tuple, Dict, Any
-import json
 
-from .models import WhaleResNet, CenterLoss, Accuracy, BinaryAccuracy
+from .models import CenterLoss
 from torch.utils.data import DataLoader
 
 class ModelCheckpoint:
@@ -18,7 +15,7 @@ class ModelCheckpoint:
         self.monitor = monitor
         self.mode = mode
         self.save_best_only = save_best_only
-        self.best_score = np.Infinity if mode == 'min' else -np.Infinity
+        self.best_score = float("inf") if mode == 'min' else -float("inf")
         
         os.makedirs(save_dir, exist_ok=True)
     
@@ -43,9 +40,15 @@ class ModelCheckpoint:
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'score': score,
+            'score': float(score),
+            'model_kwargs': model.model_kwargs,
+            'class_names': model.class_names,
+            'model_type': 'siamese' if hasattr(model, 'score_embeddings') else 'classification',
+            'image_size': getattr(model, 'image_size', None),
         }
         
+        if getattr(self, 'center_loss', None) is not None:
+            checkpoint['center_loss_state_dict'] = self.center_loss.state_dict()
         if scheduler is not None:
             checkpoint['scheduler_state_dict'] = scheduler.state_dict()
         
@@ -70,11 +73,12 @@ class Trainer:
         self.model.train()
         losses = []
         metrics = []
+        sizes = []
         
         pbar = tqdm(train_loader, desc='Training', leave=False)
         for batch in pbar:
-            images = Variable(batch['image'].to(self.device))
-            labels = Variable(batch['label'].squeeze().to(self.device))
+            images = batch['image'].to(self.device)
+            labels = batch['label'].reshape(-1).to(self.device)
             
             optimizer.zero_grad()
             
@@ -84,25 +88,25 @@ class Trainer:
                 center_loss_val = center_loss(embeddings, labels)
                 total_loss = classification_loss + center_loss_weight * center_loss_val
             else:
-                preds = self.model(images)[0] if isinstance(self.model(images), tuple) else self.model(images)
+                output = self.model(images)
+                preds = output[0] if isinstance(output, tuple) else output
                 total_loss = loss_fn(preds, labels)
             
             total_loss.backward()
             optimizer.step()
             
-            if scheduler is not None:
-                scheduler.step()
             
             metric = metric_fn(preds, labels)
             losses.append(total_loss.item())
             metrics.append(metric.item())
+            sizes.append(labels.shape[0])
             
             pbar.set_postfix({
-                'loss': f'{np.mean(losses):.4f}',
-                'acc': f'{np.mean(metrics):.4f}'
+                'loss': f'{np.average(losses, weights=sizes):.4f}',
+                'metric': f'{np.average(metrics, weights=sizes):.4f}'
             })
         
-        return np.mean(losses), np.mean(metrics)
+        return float(np.average(losses, weights=sizes)), float(np.average(metrics, weights=sizes))
     
     def validate(self, val_loader: DataLoader, loss_fn: nn.Module, 
                 metric_fn: nn.Module, center_loss: Optional[CenterLoss] = None,
@@ -110,12 +114,13 @@ class Trainer:
         self.model.eval()
         losses = []
         metrics = []
+        sizes = []
         
         with torch.no_grad():
             pbar = tqdm(val_loader, desc='Validation', leave=False)
             for batch in pbar:
-                images = Variable(batch['image'].to(self.device))
-                labels = Variable(batch['label'].squeeze().to(self.device))
+                images = batch['image'].to(self.device)
+                labels = batch['label'].reshape(-1).to(self.device)
                 
                 if center_loss is not None:
                     preds, embeddings = self.model(images)
@@ -123,19 +128,21 @@ class Trainer:
                     center_loss_val = center_loss(embeddings, labels)
                     total_loss = classification_loss + center_loss_weight * center_loss_val
                 else:
-                    preds = self.model(images)[0] if isinstance(self.model(images), tuple) else self.model(images)
+                    output = self.model(images)
+                    preds = output[0] if isinstance(output, tuple) else output
                     total_loss = loss_fn(preds, labels)
                 
                 metric = metric_fn(preds, labels)
                 losses.append(total_loss.item())
                 metrics.append(metric.item())
+                sizes.append(labels.shape[0])
                 
                 pbar.set_postfix({
-                    'loss': f'{np.mean(losses):.4f}',
-                    'acc': f'{np.mean(metrics):.4f}'
+                    'loss': f'{np.average(losses, weights=sizes):.4f}',
+                    'metric': f'{np.average(metrics, weights=sizes):.4f}'
                 })
         
-        return np.mean(losses), np.mean(metrics)
+        return float(np.average(losses, weights=sizes)), float(np.average(metrics, weights=sizes))
     
     def train(self, train_loader: DataLoader, val_loader: Optional[DataLoader],
               optimizer: torch.optim.Optimizer, loss_fn: nn.Module, 
@@ -145,6 +152,8 @@ class Trainer:
               center_loss: Optional[CenterLoss] = None,
               center_loss_weight: float = 0.0) -> Dict[str, list]:
         
+        self.train_losses, self.val_losses = [], []
+        self.train_metrics, self.val_metrics = [], []
         for epoch in range(num_epochs):
             print(f'\nEpoch {epoch+1}/{num_epochs}')
             
@@ -154,6 +163,9 @@ class Trainer:
                 scheduler, center_loss, center_loss_weight
             )
             
+            if scheduler is not None:
+                scheduler.step()
+
             # Validation
             if val_loader is not None:
                 val_loss, val_metric = self.validate(
@@ -170,9 +182,9 @@ class Trainer:
             self.val_metrics.append(val_metric)
             
             # Print epoch results
-            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_metric:.4f}')
+            print(f'Train Loss: {train_loss:.4f}, Train Metric: {train_metric:.4f}')
             if val_loader is not None:
-                print(f'Val Loss: {val_loss:.4f}, Val Acc: {val_metric:.4f}')
+                print(f'Val Loss: {val_loss:.4f}, Val Metric: {val_metric:.4f}')
             
             # Save checkpoint
             if checkpoint is not None:
@@ -198,12 +210,13 @@ class SiameseTrainer:
         self.model.train()
         losses = []
         metrics = []
+        sizes = []
         
         pbar = tqdm(train_loader, desc='Training', leave=False)
         for batch in pbar:
-            image1 = Variable(batch['image1'].to(self.device))
-            image2 = Variable(batch['image2'].to(self.device))
-            labels = Variable(batch['label'].to(self.device))
+            image1 = batch['image1'].to(self.device)
+            image2 = batch['image2'].to(self.device)
+            labels = batch['label'].to(self.device)
             
             optimizer.zero_grad()
             
@@ -213,32 +226,32 @@ class SiameseTrainer:
             loss.backward()
             optimizer.step()
             
-            if scheduler is not None:
-                scheduler.step()
             
             metric = metric_fn(preds, labels)
             losses.append(loss.item())
             metrics.append(metric.item())
+            sizes.append(labels.shape[0])
             
             pbar.set_postfix({
-                'loss': f'{np.mean(losses):.4f}',
-                'acc': f'{np.mean(metrics):.4f}'
+                'loss': f'{np.average(losses, weights=sizes):.4f}',
+                'metric': f'{np.average(metrics, weights=sizes):.4f}'
             })
         
-        return np.mean(losses), np.mean(metrics)
+        return float(np.average(losses, weights=sizes)), float(np.average(metrics, weights=sizes))
     
     def validate(self, val_loader: DataLoader, loss_fn: nn.Module, 
                 metric_fn: nn.Module) -> Tuple[float, float]:
         self.model.eval()
         losses = []
         metrics = []
+        sizes = []
         
         with torch.no_grad():
             pbar = tqdm(val_loader, desc='Validation', leave=False)
             for batch in pbar:
-                image1 = Variable(batch['image1'].to(self.device))
-                image2 = Variable(batch['image2'].to(self.device))
-                labels = Variable(batch['label'].to(self.device))
+                image1 = batch['image1'].to(self.device)
+                image2 = batch['image2'].to(self.device)
+                labels = batch['label'].to(self.device)
                 
                 preds = self.model(image1, image2)
                 loss = loss_fn(preds, labels)
@@ -246,13 +259,14 @@ class SiameseTrainer:
                 
                 losses.append(loss.item())
                 metrics.append(metric.item())
+                sizes.append(labels.shape[0])
                 
                 pbar.set_postfix({
-                    'loss': f'{np.mean(losses):.4f}',
-                    'acc': f'{np.mean(metrics):.4f}'
+                    'loss': f'{np.average(losses, weights=sizes):.4f}',
+                    'metric': f'{np.average(metrics, weights=sizes):.4f}'
                 })
         
-        return np.mean(losses), np.mean(metrics)
+        return float(np.average(losses, weights=sizes)), float(np.average(metrics, weights=sizes))
     
     def train(self, train_loader: DataLoader, val_loader: Optional[DataLoader],
               optimizer: torch.optim.Optimizer, loss_fn: nn.Module, 
@@ -273,6 +287,9 @@ class SiameseTrainer:
                 train_loader, optimizer, loss_fn, metric_fn, scheduler
             )
             
+            if scheduler is not None:
+                scheduler.step()
+
             # Validation
             if val_loader is not None:
                 val_loss, val_metric = self.validate(val_loader, loss_fn, metric_fn)
@@ -286,9 +303,9 @@ class SiameseTrainer:
             val_metrics.append(val_metric)
             
             # Print epoch results
-            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_metric:.4f}')
+            print(f'Train Loss: {train_loss:.4f}, Train Metric: {train_metric:.4f}')
             if val_loader is not None:
-                print(f'Val Loss: {val_loss:.4f}, Val Acc: {val_metric:.4f}')
+                print(f'Val Loss: {val_loss:.4f}, Val Metric: {val_metric:.4f}')
             
             # Save checkpoint
             if checkpoint is not None:

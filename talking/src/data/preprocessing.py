@@ -1,9 +1,6 @@
 import pandas as pd
-import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import warnings
-warnings.filterwarnings('ignore')
+
+from .data_utils import FeatureEngineer, TalkingDataProcessor
 
 class DataPreprocessor:
     """Data preprocessing pipeline for TalkingData AdTracking dataset."""
@@ -15,6 +12,7 @@ class DataPreprocessor:
     def preprocess_all_data(self):
         """Run complete data preprocessing pipeline."""
         print("Starting data preprocessing...")
+        self.config._create_directories()
         
         # Load and process training data
         print("Processing training data...")
@@ -28,20 +26,17 @@ class DataPreprocessor:
         print("Processing supplement data...")
         supplement_data = self._load_supplement_data()
         
+        # Match complete events before counting so test overlap is counted once.
+        id_mapping = self._create_id_mapping(test_data, supplement_data)
+
         # Create feature mappings
         print("Creating feature mappings...")
-        self._create_feature_mappings(train_data, test_data, supplement_data)
-        
-        # Create ID mapping
-        print("Creating ID mapping...")
-        self._create_id_mapping(test_data, supplement_data)
+        self._create_feature_mappings(train_data, test_data, supplement_data, id_mapping)
         
         print("Data preprocessing completed!")
         
     def _load_and_process_train_data(self) -> pd.DataFrame:
         """Load and process training data."""
-        from .data_utils import TalkingDataProcessor
-        
         processor = TalkingDataProcessor(self.config)
         
         # Load raw data
@@ -68,8 +63,6 @@ class DataPreprocessor:
     
     def _load_and_process_test_data(self) -> pd.DataFrame:
         """Load and process test data."""
-        from .data_utils import TalkingDataProcessor
-        
         processor = TalkingDataProcessor(self.config)
         
         # Load raw data
@@ -88,22 +81,25 @@ class DataPreprocessor:
     
     def _load_supplement_data(self) -> pd.DataFrame:
         """Load supplement data."""
-        from .data_utils import TalkingDataProcessor
-        
         processor = TalkingDataProcessor(self.config)
         
         # Load raw data
         data = processor.load_raw_data('supplement')
         
-        return data
+        return processor.create_time_features(data)
     
     def _create_feature_mappings(self, train_data: pd.DataFrame, 
                                 test_data: pd.DataFrame, 
-                                supplement_data: pd.DataFrame):
+                                supplement_data: pd.DataFrame, id_mapping: pd.DataFrame):
         """Create feature mappings for count features."""
         
         # Combine all data for feature creation
-        combined_data = pd.concat([train_data, test_data, supplement_data], ignore_index=True)
+        unmatched_test = test_data[~test_data['click_id'].isin(id_mapping['click_id'])]
+        feature_cols = ['ip', 'app', 'device', 'os', 'channel', 'day', 'hour']
+        combined_data = pd.concat(
+            [frame[feature_cols] for frame in (train_data, unmatched_test, supplement_data)],
+            ignore_index=True,
+        )
         
         # Create count features
         count_features = self.feature_engineer.create_count_features(combined_data)
@@ -145,22 +141,20 @@ class DataPreprocessor:
         """Create ID mapping between test and supplement data."""
         
         # Prepare data for mapping
-        old_data = supplement_data.rename(columns={'click_id': 'old_id'})
-        new_data = test_data.rename(columns={'click_id': 'new_id'})
+        feature_cols = ['ip', 'app', 'device', 'os', 'channel', 'click_time']
+        old_data = supplement_data[feature_cols + ['click_id']].rename(columns={'click_id': 'old_id'})
+        new_data = test_data[feature_cols + ['click_id']].copy()
+        for frame in (old_data, new_data):
+            frame['_occurrence'] = frame.groupby(feature_cols).cumcount()
         
         # Create mapping based on feature combinations
-        feature_cols = ['ip', 'app', 'device', 'os', 'channel']
-        id_map = old_data.merge(new_data, on=feature_cols)
-        id_map = id_map[['old_id', 'new_id']].rename(columns={'new_id': 'click_id'})
-        
-        # Get maximum old_id for each new_id
-        id_map = id_map.groupby('click_id')['old_id'].max().reset_index()
+        id_map = new_data.merge(
+            old_data, on=feature_cols + ['_occurrence'], validate='one_to_one'
+        )[['click_id', 'old_id']]
         
         # Save mapping
         file_path = self.config.PROCESSED_DATA_DIR / 'mapping.feather'
         id_map.to_feather(file_path)
         
         print(f"Created ID mapping with {len(id_map)} entries")
-
-# Import here to avoid circular imports
-from .data_utils import FeatureEngineer
+        return id_map

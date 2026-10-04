@@ -34,8 +34,6 @@ def example_tta_prediction():
                         output_name="resnet_tta_predictions")
 
 def example_ensemble():
-    config = Config()
-    
     print("Example: Ensemble Predictions")
     print("=" * 50)
     
@@ -59,27 +57,21 @@ def example_data_preprocessing():
     print("=" * 50)
     
     create_folds("data/train_tp.csv", "data/positive.csv", n_folds=5)
-    resample_audio("data/raw/train/", "data/resample/train/")
-    resample_audio("data/raw/test/", "data/resample/test/")
+    resample_audio("data/train/", "data/resample/train/")
+    resample_audio("data/test/", "data/resample/test/")
 
 if __name__ == "__main__":
-    print("RFCX Species Audio Detection - Example Usage")
-    print("=" * 60)
-    
-    print("\n1. Data Preprocessing:")
-    example_data_preprocessing()
-    
-    print("\n2. Basic Training:")
-    example_basic_training()
-    
-    print("\n3. Generate Predictions:")
-    example_prediction()
-    
-    print("\n4. TTA Predictions:")
-    example_tta_prediction()
-    
-    print("\n5. Ensemble Predictions:")
-    example_ensemble()
-    
-    print("\n6. Full Pipeline:")
-    example_full_pipeline()
+    import argparse
+
+    examples = {
+        "preprocess": example_data_preprocessing,
+        "train": example_basic_training,
+        "predict": example_prediction,
+        "tta": example_tta_prediction,
+        "ensemble": example_ensemble,
+        "full": example_full_pipeline,
+    }
+    parser = argparse.ArgumentParser(description="Run one RFCX Python API example")
+    parser.add_argument("example", choices=examples)
+    args = parser.parse_args()
+    examples[args.example]()

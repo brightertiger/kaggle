@@ -1,14 +1,15 @@
 import os
+import random
 import time
 import logging
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam, SGD
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
+from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 from sklearn.metrics import fbeta_score
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Optional
 
 from .config import Config
 from .models import ResNextClassifier, ModelFactory, save_model_checkpoint, load_model_checkpoint
@@ -22,12 +23,11 @@ class MetricsCalculator:
         self.top_k = config.top_k
     
     def make_mask(self, argsorted: np.ndarray, top_n: int) -> np.ndarray:
+        top_n = min(top_n, argsorted.shape[1])
         mask = np.zeros_like(argsorted, dtype=np.uint8)
-        col_indices = argsorted[:, -top_n:].reshape(-1)
-        row_indices = [i // top_n for i in range(len(col_indices))]
-        mask[row_indices, col_indices] = 1
+        np.put_along_axis(mask, argsorted[:, -top_n:], 1, axis=1)
         return mask
-    
+
     def binarize_predictions(self, probabilities: np.ndarray, threshold: float) -> np.ndarray:
         argsorted = probabilities.argsort(axis=1)
         max_mask = self.make_mask(argsorted, self.top_k)
@@ -38,7 +38,8 @@ class MetricsCalculator:
     def calculate_fbeta_score(self, y_true: np.ndarray, y_pred: np.ndarray, 
                             threshold: float = 0.2) -> float:
         y_pred_binary = self.binarize_predictions(y_pred, threshold)
-        return fbeta_score(y_true, y_pred_binary, beta=self.config.f2_beta, average='samples')
+        return fbeta_score(np.asarray(y_true) > 0.5, y_pred_binary,
+                           beta=self.config.f2_beta, average='samples', zero_division=0)
     
     def calculate_metrics(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
         metrics = {}
@@ -66,7 +67,7 @@ class ModelTrainer:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(self.config.get_log_path(0)),
+                logging.FileHandler(self.config.get_log_path(0), delay=True),
                 logging.StreamHandler()
             ]
         )
@@ -97,20 +98,23 @@ class ModelTrainer:
         
         progress_bar = tqdm(train_loader, desc="Training", leave=False)
         
-        for batch_idx, batch in enumerate(progress_bar):
+        for batch in progress_bar:
             images = batch['image'].to(self.device)
-            labels = batch['label'].squeeze().to(self.device)
+            labels = batch['label'].to(self.device)
             
             optimizer.zero_grad()
+            # BatchNorm cannot estimate variance from a singleton spatial cell.
+            if images.size(0) == 1:
+                for module in model.modules():
+                    if isinstance(module, nn.BatchNorm2d):
+                        module.eval()
             outputs = model(images)
             loss = loss_fn(outputs, labels)
             
             batch_size = outputs.size(0)
             (batch_size * loss).backward()
             
-            if batch_idx % 1 == 0:
-                optimizer.step()
-                optimizer.zero_grad()
+            optimizer.step()
             
             total_loss += loss.item()
             
@@ -121,6 +125,7 @@ class ModelTrainer:
                 all_predictions.append(predictions)
                 all_labels.append(labels_np)
             
+            model.train()
             progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
         
         all_predictions = np.vstack(all_predictions)
@@ -141,7 +146,7 @@ class ModelTrainer:
         with torch.no_grad():
             for batch in tqdm(valid_loader, desc="Validation", leave=False):
                 images = batch['image'].to(self.device)
-                labels = batch['label'].squeeze().to(self.device)
+                labels = batch['label'].to(self.device)
                 
                 outputs = model(images)
                 loss = loss_fn(outputs, labels)
@@ -171,11 +176,8 @@ class ModelTrainer:
         scheduler = self.create_scheduler(optimizer, stage)
         loss_fn = ModelFactory.create_loss_function('focal', self.config)
         
-        if checkpoint_path and os.path.exists(checkpoint_path):
-            checkpoint_info = load_model_checkpoint(model, checkpoint_path)
-            self.logger.info(f"Loaded checkpoint: {checkpoint_info}")
-        
-        best_metric = 0.0
+        best_metric = -float("inf")
+        best_metrics = None
         patience_counter = 0
         
         for epoch in range(epochs):
@@ -201,10 +203,12 @@ class ModelTrainer:
                 best_metric = val_metrics['best_fbeta']
                 patience_counter = 0
                 
-                save_model_checkpoint(
-                    model, epoch, val_metrics['loss'], 
-                    val_metrics['best_fbeta'], checkpoint_path
-                )
+                best_metrics = dict(val_metrics)
+                if checkpoint_path is not None:
+                    save_model_checkpoint(
+                        model, epoch, val_metrics['loss'],
+                        val_metrics['best_fbeta'], checkpoint_path
+                    )
                 self.logger.info(f"New best model saved with F-Beta: {best_metric:.4f}")
             else:
                 patience_counter += 1
@@ -213,11 +217,16 @@ class ModelTrainer:
                 self.logger.info(f"Early stopping triggered after {epoch+1} epochs")
                 break
         
-        return val_metrics
+        if best_metrics is None:
+            raise ValueError('Training must run at least one epoch with finite metrics')
+        return best_metrics
     
     def train_fold(self, fold_idx: int) -> Dict[str, float]:
         self.logger.info(f"Training fold {fold_idx}...")
         
+        random.seed(self.config.seed + fold_idx)
+        np.random.seed(self.config.seed + fold_idx)
+        torch.manual_seed(self.config.seed + fold_idx)
         train_loader, valid_loader = create_data_loaders(self.config, fold_idx)
         
         model = ModelFactory.create_model(self.config).to(self.device)
@@ -226,22 +235,25 @@ class ModelTrainer:
         stage2_path = self.config.get_model_path(fold_idx, 'stage_2')
         
         self.logger.info("Stage 1: Training with frozen backbone...")
-        stage1_metrics = self.train_stage(
+        model.freeze()
+        self.train_stage(
             model, train_loader, valid_loader, 
-            stage=1, epochs=1, checkpoint_path=None
+            stage=1, epochs=1, checkpoint_path=stage1_path
         )
         
         self.logger.info("Stage 2: Fine-tuning entire model...")
+        load_model_checkpoint(model, stage1_path)
         model.unfreeze_backbone()
         stage2_metrics = self.train_stage(
             model, train_loader, valid_loader,
-            stage=2, epochs=self.config.epochs, checkpoint_path=stage1_path
+            stage=2, epochs=self.config.epochs, checkpoint_path=stage2_path
         )
         
         self.logger.info(f"Fold {fold_idx} completed. Best F-Beta: {stage2_metrics['best_fbeta']:.4f}")
         
         del model
-        torch.cuda.empty_cache()
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
         
         return stage2_metrics
     

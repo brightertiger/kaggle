@@ -4,24 +4,25 @@ import random
 import librosa as lb
 import numpy as np 
 import pandas as pd
-import soundfile as sf
 import albumentations as A
 from torch.utils.data import Dataset
-from audiomentations import Compose, AddGaussianNoise, TimeStretch, Shift
+from audiomentations import Compose, AddGaussianNoise
 from albumentations.pytorch.transforms import ToTensorV2
-from typing import Tuple, List
+from typing import Tuple
 from .config import Config
 
 class AudioProcessor:
     def __init__(self, config: Config):
         self.config = config
+        size = config.model.input_size
         self.audio_augment = Compose([
             AddGaussianNoise(min_amplitude=0.001, max_amplitude=0.005, p=1.),
         ], p=1.)
         
         self.train_augment = A.Compose([
-            A.RandomCrop(300, 300, p=1.),
-            A.CoarseDropout(max_holes=10, p=.5),
+            A.PadIfNeeded(size, size, border_mode=cv2.BORDER_CONSTANT, p=1.),
+            A.RandomCrop(size, size, p=1.),
+            A.CoarseDropout(num_holes_range=(1, 10), p=.5),
             A.RandomBrightnessContrast(brightness_limit=(-0.1,0.1), contrast_limit=(-0.1, 0.1), p=0.5),
             A.GaussNoise(p=.5),
             A.Normalize(p=1.),
@@ -29,13 +30,15 @@ class AudioProcessor:
         ], p=1.)
         
         self.valid_augment = A.Compose([
-            A.RandomCrop(300, 300, p=1.),
+            A.PadIfNeeded(size, size, border_mode=cv2.BORDER_CONSTANT, p=1.),
+            A.CenterCrop(size, size, p=1.),
             A.Normalize(p=1.),
             ToTensorV2()
         ], p=1.)
         
         self.test_augment = A.Compose([
-            A.RandomCrop(300, 300, p=1.),
+            A.PadIfNeeded(size, size, border_mode=cv2.BORDER_CONSTANT, p=1.),
+            A.CenterCrop(size, size, p=1.),
             A.Normalize(p=1.),
             ToTensorV2()
         ], p=1.)
@@ -47,7 +50,7 @@ class AudioProcessor:
             'fmin': self.config.audio.fmin,
             'fmax': self.config.audio.fmax
         }
-        spec = lb.feature.melspectrogram(audio, **params)
+        spec = lb.feature.melspectrogram(y=audio, **params)
         spec = lb.power_to_db(spec).astype(np.float32)
         return spec
 
@@ -68,17 +71,14 @@ class AudioProcessor:
                             apply_augmentation: bool = False) -> np.ndarray:
         t_min_samples = float(t_min) * self.config.audio.sample_rate
         t_max_samples = float(t_max) * self.config.audio.sample_rate
-        center = np.round((t_min_samples + t_max_samples) / 2) + np.random.uniform(-1, 1)
+        center = np.round((t_min_samples + t_max_samples) / 2)
+        if apply_augmentation:
+            center += np.random.uniform(-1, 1)
         
-        length_samples = self.config.audio.segment_length * self.config.audio.sample_rate
-        beginning = max(center - length_samples / 2, 0)
-        ending = beginning + length_samples
-        
-        if ending > len(audio):
-            ending = len(audio)
-            beginning = ending - length_samples
-            
-        audio_segment = audio[int(beginning):int(ending)]
+        length_samples = int(round(self.config.audio.segment_length * self.config.audio.sample_rate))
+        beginning = int(np.clip(center - length_samples / 2, 0, max(0, len(audio) - length_samples)))
+        audio_segment = audio[beginning:beginning + length_samples].astype(np.float32)
+        audio_segment = np.pad(audio_segment, (0, max(0, length_samples - len(audio_segment))))
         
         if apply_augmentation:
             audio_segment = self.audio_augment(samples=audio_segment, 
@@ -139,7 +139,7 @@ class TrainDataset(Dataset):
         
         label = lam * label1_vec + (1. - lam) * label2_vec
         
-        return torch.tensor(image, dtype=torch.float), torch.tensor(label, dtype=torch.float)
+        return image.float(), torch.tensor(label, dtype=torch.float)
 
 class ValidDataset(Dataset):
     def __init__(self, data: pd.DataFrame, fold: int, config: Config):
@@ -172,7 +172,7 @@ class ValidDataset(Dataset):
         label_vec = np.zeros(self.config.model.num_classes)
         label_vec[label] = 1.0
         
-        return torch.tensor(image, dtype=torch.float), torch.tensor(label_vec, dtype=torch.float)
+        return image.float(), torch.tensor(label_vec, dtype=torch.float)
 
 class TestDataset(Dataset):
     def __init__(self, data: pd.DataFrame, config: Config, apply_tta: bool = False):
@@ -203,22 +203,16 @@ class TestDataset(Dataset):
         name = self.data.iloc[idx]['recording_id']
         audio = np.load(f"{self.config.data.audio_data_path}/test/{name}.npy")
         
-        length_samples = self.config.audio.segment_length * self.config.audio.sample_rate
-        segments = int(np.ceil(len(audio) / length_samples)) * 4
-        
+        length_samples = int(round(self.config.audio.segment_length * self.config.audio.sample_rate))
+        stride = max(1, int(round(length_samples * (1 - self.config.audio.overlap_ratio))))
+        last_start = max(0, len(audio) - length_samples)
+        starts = list(range(0, last_start + 1, stride))
+        if starts[-1] != last_start:
+            starts.append(last_start)
         images = []
-        start = 0
-        
-        for i in range(segments):
-            begin = int(start)
-            end = int(start + length_samples)
-            
-            if end > len(audio):
-                end = len(audio)
-                begin = end - length_samples
-                
-            start += length_samples / 4
-            audio_segment = audio[begin:end]
+        for begin in starts:
+            audio_segment = audio[begin:begin + length_samples].astype(np.float32)
+            audio_segment = np.pad(audio_segment, (0, max(0, length_samples - len(audio_segment))))
             
             image = self._create_image(audio_segment, apply_augmentation=self.apply_tta)
             images.append(image.unsqueeze(0))
@@ -227,16 +221,22 @@ class TestDataset(Dataset):
 
 def create_data_loaders(config: Config, fold: int) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     data = pd.read_csv(config.data.train_data_path)
+    if 'fold' not in data:
+        raise ValueError("Missing fold column: run main.py --mode preprocess first")
+    if data.groupby('recording_id')['fold'].nunique().gt(1).any():
+        raise ValueError("A recording appears in multiple folds; recreate grouped folds")
     
     train_dataset = TrainDataset(data, fold, config)
     valid_dataset = ValidDataset(data, fold, config)
+    if not len(train_dataset) or not len(valid_dataset):
+        raise ValueError(f"Fold {fold} must have nonempty training and validation sets")
     
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.training.batch_size,
         shuffle=True,
         num_workers=config.training.num_workers,
-        drop_last=True
+        drop_last=False
     )
     
     valid_loader = torch.utils.data.DataLoader(

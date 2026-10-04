@@ -1,12 +1,11 @@
 import pandas as pd
 import numpy as np
-import cv2
 from scipy.stats import kurtosis, skew
 from scipy.ndimage import laplace, sobel
 from itertools import combinations
 from multiprocessing import Pool
-from tqdm import tqdm
 import gc
+from pathlib import Path
 
 class FeatureEngineer:
     def __init__(self, config):
@@ -14,7 +13,7 @@ class FeatureEngineer:
         
     def read_json_data(self, file_path):
         df = pd.read_json(file_path)
-        df['inc_angle'] = df['inc_angle'].replace('na', -1).astype(float)
+        df['inc_angle'] = pd.to_numeric(df['inc_angle'], errors='coerce').replace([np.inf, -np.inf], np.nan).fillna(-1)
         
         band1 = np.array([np.array(band).astype(np.float32).reshape(75, 75) for band in df["band_1"]])
         band2 = np.array([np.array(band).astype(np.float32).reshape(75, 75) for band in df["band_2"]])
@@ -24,9 +23,9 @@ class FeatureEngineer:
         
         return df, bands
     
+    @np.errstate(divide='ignore', invalid='ignore')
     def extract_image_statistics(self, img_data):
         img_id, img = img_data[0], img_data[1]
-        np.seterr(divide='ignore', invalid='ignore')
         
         bins = 20
         scl_min, scl_max = -50, 50
@@ -57,7 +56,8 @@ class FeatureEngineer:
             sobel0 = sobel(img_sub, axis=0, mode='reflect', cval=0.0).ravel().var()
             sobel1 = sobel(img_sub, axis=1, mode='reflect', cval=0.0).ravel().var()
             transform_features += [sobel0, sobel1]
-            transform_features += [kurtosis(img_sub.ravel()), skew(img_sub.ravel())]
+            transform_features += [kurtosis(img_sub.ravel()) if img_sub.std() > 0 else 0.0,
+                                   skew(img_sub.ravel()) if img_sub.std() > 0 else 0.0]
             
             if opt_poly:
                 features_interv.append(sub_features)
@@ -84,23 +84,19 @@ class FeatureEngineer:
         
         nan_value = -999
         for i in range(len(features)):
-            if np.isnan(features[i]):
+            if not np.isfinite(features[i]):
                 features[i] = nan_value
         
         return [img_id, features]
     
     def extract_features_parallel(self, img_data_list):
-        feature_dict = {}
-        p = Pool(2)
-        results = p.map(self.extract_image_statistics, img_data_list)
-        
-        for i in tqdm(range(len(results)), miniters=100):
-            feature_dict[results[i][0]] = results[i][1]
-        
-        results = []
-        feature_data = [feature_dict[i] for i, j in img_data_list]
-        return np.array(feature_data, dtype=np.float32)
-    
+        if self.config.FEATURE_WORKERS == 1:
+            results = list(map(self.extract_image_statistics, img_data_list))
+        else:
+            with Pool(self.config.FEATURE_WORKERS) as pool:
+                results = pool.map(self.extract_image_statistics, img_data_list)
+        return np.asarray([features for _, features in results], dtype=np.float32)
+
     def process_features(self, df, bands):
         data = self.extract_features_parallel([(k, v) for k, v in zip(df['id'].tolist(), bands)])
         gc.collect()
@@ -111,6 +107,7 @@ class FeatureEngineer:
         return data
     
     def create_xgboost_features(self, train_file, test_file):
+        Path(self.config.DATA_DIR).mkdir(parents=True, exist_ok=True)
         selected_features = [246, 46, 169, 35, 163, 99, 153, 170, 34, 38]
         feature_names = [f'feat_{i}' for i in range(len(selected_features))]
         

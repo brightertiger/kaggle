@@ -3,9 +3,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-from torch.autograd import Variable
 from collections import OrderedDict
-from typing import Tuple, Dict, Any
+from typing import Tuple
 from .config import Config
 
 class MetricsCalculator:
@@ -31,15 +30,15 @@ class ModelTrainer:
         
         with torch.no_grad():
             for sample in valid_loader:
-                image = Variable(sample[0].float().to(self.device))
-                label = Variable(sample[1].float().squeeze().to(self.device))
+                image = sample[0].float().to(self.device)
+                label = sample[1].float().to(self.device)
                 
-                preds = model(image).squeeze()
+                preds = model(image)
                 loss = loss_fn(preds, label).sum()
                 
-                label_array.append(label.cpu().data.numpy())
-                pred_array.append(preds.cpu().data.numpy())
-                losses.append(loss.data.item())
+                label_array.append(label.detach().cpu().numpy())
+                pred_array.append(preds.detach().cpu().numpy())
+                losses.append(loss.item())
         
         label_array = np.vstack(label_array)
         pred_array = np.vstack(pred_array)
@@ -54,19 +53,20 @@ class ModelTrainer:
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
-            'metric': metric
+            'metric': float(metric)
         }
         torch.save(checkpoint, path)
 
     def train_fold(self, model: nn.Module, train_loader: torch.utils.data.DataLoader, 
                    valid_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer,
                    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau, 
-                   loss_fn: nn.Module, fold: int) -> None:
+                   loss_fn: nn.Module, fold: int, model_type: str = "resnet") -> None:
         
         best_metric = -100.0
-        counter = 0
         
-        log_file = os.path.join(self.config.data.model_save_path, f'log_fold_{fold}.txt')
+        model_dir = os.path.join(self.config.data.model_save_path, model_type)
+        os.makedirs(model_dir, exist_ok=True)
+        log_file = os.path.join(model_dir, f'log_fold_{fold}.txt')
         if os.path.exists(log_file):
             os.remove(log_file)
         
@@ -84,24 +84,24 @@ class ModelTrainer:
             optimizer.zero_grad()
             
             for sample in train_loader:
-                image = Variable(sample[0].float().to(self.device))
-                label = Variable(sample[1].float().squeeze().to(self.device))
+                image = sample[0].float().to(self.device)
+                label = sample[1].float().to(self.device)
                 
-                preds = model(image).squeeze()
+                preds = model(image)
                 loss = loss_fn(preds, label)
                 
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
                 
-                losses.append(loss.data.item())
+                losses.append(loss.item())
                 train_loss = round(np.mean(losses), 4)
                 
                 tq.update(self.config.training.batch_size)
                 tq.set_postfix(trn_ls='{:.5f}'.format(train_loss))
                 
-                label_array.append(label.cpu().data.numpy())
-                pred_array.append(preds.cpu().data.numpy())
+                label_array.append(label.detach().cpu().numpy())
+                pred_array.append(preds.detach().cpu().numpy())
             
             label_array = np.vstack(label_array)
             pred_array = np.vstack(pred_array)
@@ -116,12 +116,9 @@ class ModelTrainer:
             tq.close()
             
             if valid_metric > best_metric:
-                counter = 0
                 best_metric = valid_metric
-                save_path = os.path.join(self.config.data.model_save_path, f'model_fold_{fold}.pt')
+                save_path = os.path.join(model_dir, f'model_fold_{fold}.pt')
                 self.save_model(epoch, model, valid_metric, save_path)
-            else:
-                counter += 1
             
             log_text = f'Epoch - {epoch} | '
             log_text += f'Train Loss - {train_loss:.4f} | '
@@ -140,6 +137,8 @@ def train_model(config: Config, model_type: str = "resnet") -> None:
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     import torch.nn as nn
     
+    if config.training.epochs < 1 or config.training.num_folds < 2:
+        raise ValueError("Training needs positive epochs and at least two folds")
     trainer = ModelTrainer(config)
     
     for fold in range(1, config.training.num_folds + 1):
@@ -161,8 +160,9 @@ def train_model(config: Config, model_type: str = "resnet") -> None:
         loss_fn = nn.BCEWithLogitsLoss()
         
         trainer.train_fold(model, train_loader, valid_loader, optimizer, 
-                          scheduler, loss_fn, fold)
+                          scheduler, loss_fn, fold, model_type)
         
         model.cpu()
         del model
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

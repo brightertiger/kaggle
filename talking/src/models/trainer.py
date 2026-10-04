@@ -1,12 +1,9 @@
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 from sklearn.metrics import roc_auc_score, roc_curve
-import warnings
-warnings.filterwarnings('ignore')
 
-from .models import TalkingDataModel, ModelEnsemble
+from .models import TalkingDataModel
 
 class ModelTrainer:
     """Model trainer for TalkingData AdTracking fraud detection."""
@@ -15,12 +12,26 @@ class ModelTrainer:
         self.config = config
         self.models = {}
         
+    def _get_model(self, model_name: str) -> TalkingDataModel:
+        """Reuse an in-memory model or lazily reload its saved booster."""
+        if model_name not in self.models:
+            self.models[model_name] = TalkingDataModel(self.config, model_name)
+        return self.models[model_name]
+
+    @staticmethod
+    def _validate_labels(data, target):
+        if data.empty or data[target].isna().any() or set(data[target].unique()) != {0, 1}:
+            raise ValueError("Training and validation each require both binary target classes; check date/hour filters")
+
     def train_single_model(self, model_name: str, train_data: pd.DataFrame, 
                           valid_data: pd.DataFrame) -> Dict:
         """Train a single model and return evaluation metrics."""
         
         print(f"Training model: {model_name}")
         
+        self._validate_labels(train_data, self.config.TARGET_COLUMN)
+        self._validate_labels(valid_data, self.config.TARGET_COLUMN)
+
         # Prepare labels
         train_labels = train_data[self.config.TARGET_COLUMN].values
         valid_labels = valid_data[self.config.TARGET_COLUMN].values
@@ -72,10 +83,7 @@ class ModelTrainer:
                            output_file: Optional[str] = None) -> pd.DataFrame:
         """Generate predictions using a trained model."""
         
-        if model_name not in self.models:
-            raise ValueError(f"Model {model_name} not found. Train the model first.")
-        
-        model = self.models[model_name]
+        model = self._get_model(model_name)
         predictions = model.predict(data)
         
         # Create result dataframe
@@ -98,11 +106,9 @@ class ModelTrainer:
     def evaluate_model(self, valid_data: pd.DataFrame, model_name: str) -> Dict:
         """Evaluate model performance on validation data."""
         
-        if model_name not in self.models:
-            raise ValueError(f"Model {model_name} not found.")
-        
-        model = self.models[model_name]
+        model = self._get_model(model_name)
         predictions = model.predict(valid_data)
+        self._validate_labels(valid_data, self.config.TARGET_COLUMN)
         true_labels = valid_data[self.config.TARGET_COLUMN].values
         
         # Calculate AUC
@@ -133,10 +139,7 @@ class ModelTrainer:
                               top_n: int = 20) -> pd.DataFrame:
         """Get feature importance for a trained model."""
         
-        if model_name not in self.models:
-            raise ValueError(f"Model {model_name} not found.")
-        
-        model = self.models[model_name]
+        model = self._get_model(model_name)
         importance_df = model.get_feature_importance()
         
         return importance_df.head(top_n)
@@ -152,10 +155,7 @@ class ModelTrainer:
                          output_file: str) -> pd.DataFrame:
         """Create submission file for test data."""
         
-        if model_name not in self.models:
-            raise ValueError(f"Model {model_name} not found.")
-        
-        model = self.models[model_name]
+        model = self._get_model(model_name)
         predictions = model.predict(test_data)
         
         submission = pd.DataFrame({

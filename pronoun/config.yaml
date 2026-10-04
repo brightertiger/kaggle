@@ -7,6 +7,8 @@ model:
   epochs: 5
   batch_size: 20
   max_length: 500
+  freeze_layers: 12
+  random_init: false
 
 data:
   train_path: "data/gap-test.tsv"
@@ -14,5 +16,11 @@ data:
   test_path: "data/gap-development.tsv"
   output_dir: "outputs"
   n_folds: 5
+  num_workers: 0
+  spacy_model: "en_core_web_lg"
 
 device: "cuda:0"
+
+# Paths are relative to the working directory; run from this folder.
+# Defaults: pretrained BERT, en_core_web_lg, zero DataLoader workers.
+seed: 42

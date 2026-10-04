@@ -7,11 +7,6 @@ with different approaches and configurations.
 """
 
 import os
-import sys
-from pathlib import Path
-
-# Add src to path
-sys.path.append(str(Path(__file__).parent / "src"))
 
 from src.config import Config
 from src.pipeline import WhaleIdentificationPipeline
@@ -30,7 +25,7 @@ def example_basic_classification():
         batch_size=32,
         learning_rate=1e-3,
         num_epochs=10,
-        model_save_dir="models/basic_classification"
+        model_save_dir="models"
     )
     
     # Initialize pipeline
@@ -61,7 +56,7 @@ def example_center_loss_training():
         learning_rate=1e-3,
         num_epochs=20,
         center_loss_weight=0.5,  # Weight for center loss
-        model_save_dir="models/center_loss"
+        model_save_dir="models"
     )
     
     # Initialize pipeline
@@ -92,7 +87,7 @@ def example_pseudo_label_training():
         batch_size=64,
         learning_rate=1e-3,
         num_epochs=15,
-        model_save_dir="models/pseudo_label"
+        model_save_dir="models"
     )
     
     # Initialize pipeline
@@ -126,7 +121,7 @@ def example_siamese_training():
         batch_size=32,  # Smaller batch for siamese
         pair_model_lr=1e-4,
         pair_model_epochs=10,
-        model_save_dir="models/siamese"
+        model_save_dir="models"
     )
     
     # Initialize pipeline
@@ -290,6 +285,7 @@ def main():
     except Exception as e:
         print(f"Error running examples: {e}")
         print("Please check your data structure and file paths.")
+        raise
 
 if __name__ == "__main__":
     main()

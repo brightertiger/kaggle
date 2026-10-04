@@ -1,148 +1,105 @@
-import re
-import string
-import pandas as pd
+import hashlib
 import numpy as np
-import torch
+import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 from transformers import XLMRobertaTokenizer
 from ..utils.config import Config
 
+
 class TextTokenizer:
-    def __init__(self):
-        self.tokenizer = XLMRobertaTokenizer.from_pretrained(
-            Config.MODEL_NAME, 
-            do_lower_case=False
-        )
-        self.params = {
-            'max_length': Config.MAX_LENGTH,
-            'pad_to_max_length': True,
-            'return_attention_mask': True,
-            'truncation_strategy': 'longest_first',
-            'add_special_tokens': True,
-            'do_lower_case': False
-        }
-    
+    def __init__(self, config=None):
+        self.config = config or Config()
+        self.tokenizer = None if self.config.TINY else XLMRobertaTokenizer.from_pretrained(self.config.MODEL_NAME)
+
     def tokenize_text(self, text):
-        text = str(text) + ' '
-        if len(text.split()) >= 200:
-            text = text.split()
-            text = text[:200] + text[-50:]
-            text = ' '.join(text)
-        
-        encoded = self.tokenizer.encode_plus(text, **self.params)
-        tokens = np.array(encoded['input_ids']).astype(int)
-        attention_mask = np.array(encoded['attention_mask']).astype(int)
-        return tokens, attention_mask
+        words = str(text).split()
+        if len(words) >= 200:
+            words = words[:200] + words[-50:]
+        text = ' '.join(words)
+        if self.config.TINY:
+            # Stable offline token IDs; only used to smoke-test the same model path.
+            ids = [0] + [4 + int(hashlib.sha256(w.encode()).hexdigest(), 16) %
+                         (self.config.VOCAB_SIZE - 4) for w in words[:self.config.MAX_LENGTH - 2]] + [2]
+            mask = [1] * len(ids)
+            padding = self.config.MAX_LENGTH - len(ids)
+            return np.array(ids + [1] * padding), np.array(mask + [0] * padding)
+        encoded = self.tokenizer(text, max_length=self.config.MAX_LENGTH,
+                                 padding='max_length', truncation=True, return_attention_mask=True)
+        return np.array(encoded['input_ids']), np.array(encoded['attention_mask'])
+
 
 class TrainDataset(Dataset):
-    def __init__(self, subset):
-        self.source = pd.read_csv(f'{Config.DATA_DIR}/pseudo/train_combine.csv')
-        self.source = self.source[self.source['source'] == '2020-train']
-        self.source = self.source.sample(frac=1., random_state=Config.SEED)
-        self.source = self.source.reset_index(drop=True)
-        self.source['fold'] = self.source.index % Config.N_FOLDS
-        self.source = self.source[self.source['fold'] == subset]
-        self.source = self.source.reset_index(drop=True)
-        print(f'Data: {self.source.shape}')
-        
-        self.tokenizer = TextTokenizer()
-    
+    def __init__(self, subset, config=None):
+        self.config = config or Config()
+        if not 0 <= subset < self.config.N_FOLDS:
+            raise ValueError('subset must be in [0, N_FOLDS)')
+        data = pd.read_csv(f'{self.config.DATA_DIR}/pseudo/train_combine.csv')
+        # Preserve the original disjoint English training subsets with a fixed
+        # multilingual holdout. These are ensemble partitions, not K-fold CV.
+        data = data.loc[data['source'] == '2020-train']
+        data = data.sample(frac=1, random_state=self.config.SEED).reset_index(drop=True)
+        self.source = data.loc[data.index % self.config.N_FOLDS == subset].reset_index(drop=True)
+        if self.source.empty:
+            raise ValueError(f'No training rows for subset {subset}')
+        self.tokenizer = TextTokenizer(self.config)
+        self.epoch(0)
+
     def __len__(self):
-        return 50000
-    
+        return len(self.source)
+
     def epoch(self, epoch):
-        self.data = self.source.sample(frac=1., random_state=Config.SEED)
-        self.data = self.data.reset_index(drop=True)
-    
+        self.data = self.source.sample(frac=1, random_state=self.config.SEED + epoch).reset_index(drop=True)
+
     def __getitem__(self, idx):
-        text = str(self.data.loc[idx, 'comment_text']) + ' '
-        tokens, attention_mask = self.tokenizer.tokenize_text(text)
-        
-        label = self.data.loc[idx, 'toxic']
-        noise = np.random.uniform(low=0.0, high=0.1)
-        if label > 0.5:
-            label = label - noise
-        else:
-            label = label + noise
-        
-        weight = self.data.loc[idx, 'weight']
-        
-        return {
-            'tokens': tokens,
-            'attention_mask': attention_mask,
-            'label': np.array(label).astype(float),
-            'weight': np.array(weight).astype(float)
-        }
+        row = self.data.iloc[idx]
+        tokens, mask = self.tokenizer.tokenize_text(row['comment_text'])
+        label = float(row['toxic'])
+        noise = np.random.uniform(0, 0.1)
+        label = label - noise if label > 0.5 else label + noise
+        return dict(tokens=tokens, attention_mask=mask,
+                    label=np.float32(label), weight=np.float32(row['weight']))
+
 
 class ValidDataset(Dataset):
-    def __init__(self):
-        self.data = pd.read_csv(f'{Config.DATA_DIR}/foreign/valid_foreign.csv')
-        self.data = self.data[self.data['original'] == 1]
+    def __init__(self, config=None):
+        self.config = config or Config()
+        self.data = pd.read_csv(f'{self.config.DATA_DIR}/foreign/valid_foreign.csv')
+        if 'original' in self.data:
+            self.data = self.data.loc[self.data['original'] == 1]
         self.data = self.data.reset_index(drop=True)
-        self.tokenizer = TextTokenizer()
-    
+        self.tokenizer = TextTokenizer(self.config)
+
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, idx):
-        text = str(self.data.loc[idx, 'comment_text']) + ' '
-        tokens, attention_mask = self.tokenizer.tokenize_text(text)
-        
-        label = self.data.loc[idx, 'toxic']
-        
-        return {
-            'tokens': tokens,
-            'attention_mask': attention_mask,
-            'label': np.array(label).astype(float),
-            'weight': np.array(1.0).astype(float)
-        }
+        row = self.data.iloc[idx]
+        tokens, mask = self.tokenizer.tokenize_text(row['comment_text'])
+        return dict(tokens=tokens, attention_mask=mask, label=np.float32(row['toxic']))
+
 
 class TestDataset(Dataset):
-    def __init__(self, test_path):
-        self.data = pd.read_csv(test_path)
-        self.tokenizer = TextTokenizer()
-    
+    def __init__(self, test_path, config=None):
+        self.data = pd.read_csv(test_path, dtype={'id': str}).rename(columns={'content': 'comment_text'})
+        self.tokenizer = TextTokenizer(config)
+
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, idx):
-        text = str(self.data.loc[idx, 'comment_text']) + ' '
-        tokens, attention_mask = self.tokenizer.tokenize_text(text)
-        
-        sample_id = self.data.loc[idx, 'id']
-        
-        return {
-            'tokens': tokens,
-            'attention_mask': attention_mask,
-            'id': np.array(sample_id).astype(int)
-        }
+        row = self.data.iloc[idx]
+        tokens, mask = self.tokenizer.tokenize_text(row['comment_text'])
+        return dict(tokens=tokens, attention_mask=mask, id=str(row['id']))
 
-def create_data_loaders(subset):
-    train_dataset = TrainDataset(subset)
-    valid_dataset = ValidDataset()
-    
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=Config.BATCH_SIZE,
-        num_workers=Config.NUM_WORKERS,
-        drop_last=True
-    )
-    
-    valid_loader = DataLoader(
-        valid_dataset,
-        batch_size=Config.BATCH_SIZE,
-        num_workers=Config.NUM_WORKERS,
-        drop_last=True
-    )
-    
-    return train_loader, valid_loader
 
-def create_test_loader(test_path):
-    test_dataset = TestDataset(test_path)
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=24,
-        num_workers=Config.NUM_WORKERS,
-        drop_last=False
-    )
-    return test_loader
+def create_data_loaders(subset, config=None):
+    config = config or Config()
+    params = dict(batch_size=config.BATCH_SIZE, num_workers=config.NUM_WORKERS, drop_last=False)
+    return (DataLoader(TrainDataset(subset, config), **params),
+            DataLoader(ValidDataset(config), **params))
+
+
+def create_test_loader(test_path, config=None):
+    config = config or Config()
+    return DataLoader(TestDataset(test_path, config), batch_size=config.BATCH_SIZE,
+                      num_workers=config.NUM_WORKERS, drop_last=False)

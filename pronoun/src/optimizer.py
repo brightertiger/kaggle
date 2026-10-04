@@ -1,12 +1,11 @@
 import math
 import torch
-import numpy as np
 from torch.optim import Optimizer
 
 class AdaBound(Optimizer):
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), final_lr=0.1, gamma=1e-3,
                  eps=1e-8, weight_decay=0, amsbound=False):
-        if not 0.0 <= lr:
+        if not 0.0 < lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
             raise ValueError("Invalid epsilon value: {}".format(eps))
@@ -16,7 +15,7 @@ class AdaBound(Optimizer):
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
         if not 0.0 <= final_lr:
             raise ValueError("Invalid final learning rate: {}".format(final_lr))
-        if not 0.0 <= gamma < 1.0:
+        if not 0.0 < gamma < 1.0:
             raise ValueError("Invalid gamma parameter: {}".format(gamma))
         
         defaults = dict(lr=lr, betas=betas, final_lr=final_lr, gamma=gamma, eps=eps,
@@ -62,10 +61,10 @@ class AdaBound(Optimizer):
                 state['step'] += 1
 
                 if group['weight_decay'] != 0:
-                    grad = grad.add(group['weight_decay'], p.data)
+                    grad = grad.add(p.data, alpha=group['weight_decay'])
 
-                exp_avg.mul_(beta1).add_(1 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
                 if amsbound:
                     torch.max(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
                     denom = max_exp_avg_sq.sqrt().add_(group['eps'])
@@ -102,7 +101,7 @@ class CosineLR(torch.optim.lr_scheduler._LRScheduler):
         self.base_lrs = [0.9 * base_lr for base_lr in self.base_lrs]
 
     def cosine(self, base_lr):
-        return np.max([self.eta_min, base_lr * (1 + math.cos(math.pi * self.step_n / self.restart_every)) / 2])
+        return max(self.eta_min, base_lr * (1 + math.cos(math.pi * self.step_n / self.restart_every)) / 2)
 
     @property
     def step_n(self):

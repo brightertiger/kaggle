@@ -1,102 +1,95 @@
-import pandas as pd
+"""Radar channel transforms and stratified, fold-local angle preprocessing."""
+import json
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+from scipy.ndimage import zoom
 from sklearn.model_selection import StratifiedKFold
-from sklearn.preprocessing import StandardScaler
-import os
+
 
 class DataProcessor:
     def __init__(self, config):
         self.config = config
-        
+
     def normalize_array(self, array):
-        return (array - array.mean()) / array.std()
-    
+        std = array.std()
+        return (array - array.mean()) / (std if std > 0 else 1.0)
+
+    def _convert_images(self, dataframe, source):
+        images = []
+        for _, row in dataframe.iterrows():
+            horizontal = np.asarray(row['band_1'], dtype=np.float32).reshape(75, 75)
+            vertical = np.asarray(row['band_2'], dtype=np.float32).reshape(75, 75)
+            if source == 1:
+                channels = (np.abs(vertical - horizontal), np.maximum(vertical, horizontal),
+                            np.minimum(vertical, horizontal))
+            else:
+                channels = (vertical, horizontal, (vertical + horizontal) / 2)
+            image = np.dstack([self.normalize_array(channel) for channel in channels])
+            if self.config.IMAGE_SIZE != 75:
+                scale = self.config.IMAGE_SIZE / 75
+                image = zoom(image, (scale, scale, 1), order=1)
+            images.append(image)
+        return np.asarray(images, dtype=np.float32)
+
     def convert_images_source1(self, dataframe):
-        images = []
-        for i, row in dataframe.iterrows():
-            horizontal = np.array(row['band_1']).reshape(75, 75)
-            vertical = np.array(row['band_2']).reshape(75, 75)
-            
-            transform1 = np.fabs(np.subtract(vertical, horizontal))
-            transform2 = np.maximum(vertical, horizontal)
-            transform3 = np.minimum(vertical, horizontal)
-            
-            collect = []
-            collect += [self.normalize_array(transform1)]
-            collect += [self.normalize_array(transform2)]
-            collect += [self.normalize_array(transform3)]
-            images.append(np.dstack(collect))
-        return np.array(images)
-    
+        return self._convert_images(dataframe, 1)
+
     def convert_images_source2(self, dataframe):
-        images = []
-        for i, row in dataframe.iterrows():
-            horizontal = np.array(row['band_1']).reshape(75, 75)
-            vertical = np.array(row['band_2']).reshape(75, 75)
-            transform = (vertical + horizontal) / 2
-            
-            collect = []
-            collect += [self.normalize_array(vertical)]
-            collect += [self.normalize_array(horizontal)]
-            collect += [self.normalize_array(transform)]
-            images.append(np.dstack(collect))
-        return np.array(images)
-    
-    def process_angles(self, angles):
-        angles = pd.to_numeric(angles, errors='coerce')
-        fill_value = np.mean(angles)
-        angles.fillna(value=fill_value, inplace=True)
-        
-        min_value = angles.min()
-        max_value = angles.max()
-        angles = (angles - min_value) / (max_value - min_value)
-        return angles
-    
+        return self._convert_images(dataframe, 2)
+
+    def process_angles(self, angles, stats=None):
+        values = pd.to_numeric(pd.Series(angles), errors='coerce').to_numpy(dtype=float, copy=True)
+        values[~np.isfinite(values)] = np.nan
+        if stats is None:
+            observed = values[np.isfinite(values)]
+            fill = float(observed.mean()) if len(observed) else 0.0
+            filled = np.nan_to_num(values, nan=fill)
+            stats = {'fill': fill, 'min': float(filled.min()),
+                     'range': float(filled.max() - filled.min()) or 1.0}
+        filled = np.nan_to_num(values, nan=stats['fill'])
+        return ((filled - stats['min']) / stats['range']).astype(np.float32), stats
+
     def create_folds(self, images, labels, angles, ids, source_name):
-        folds = StratifiedKFold(n_splits=self.config.FOLDS, 
-                              random_state=self.config.RANDOM_STATE, 
-                              shuffle=True)
-        
-        os.makedirs(f'{self.config.DATA_DIR}/{source_name}/train', exist_ok=True)
-        
-        for fold_idx, (train_idx, test_idx) in enumerate(folds.split(X=images, y=labels), 1):
-            train_images = images[train_idx]
-            test_images = images[test_idx]
-            train_angles = angles[train_idx]
-            test_angles = angles[test_idx]
-            train_labels = labels[train_idx]
-            test_labels = labels[test_idx]
-            train_ids = ids[train_idx]
-            test_ids = ids[test_idx]
-            
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/train_images_{fold_idx}', train_images)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/test_images_{fold_idx}', test_images)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/train_labels_{fold_idx}', train_labels)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/test_labels_{fold_idx}', test_labels)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/train_angles_{fold_idx}', train_angles)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/test_angles_{fold_idx}', test_angles)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/train_ids_{fold_idx}', train_ids)
-            np.save(f'{self.config.DATA_DIR}/{source_name}/train/test_ids_{fold_idx}', test_ids)
-    
+        folds = StratifiedKFold(n_splits=self.config.FOLDS,
+                               random_state=self.config.RANDOM_STATE, shuffle=True)
+        folder = Path(self.config.DATA_DIR) / source_name / 'train'
+        folder.mkdir(parents=True, exist_ok=True)
+        angles = np.asarray(angles)
+        for fold_idx, (train_idx, valid_idx) in enumerate(folds.split(images, labels), 1):
+            train_angles, stats = self.process_angles(angles[train_idx])
+            valid_angles, _ = self.process_angles(angles[valid_idx], stats)
+            (folder / f'angle_stats_{fold_idx}.json').write_text(json.dumps(stats))
+            for prefix, indices, transformed in (
+                ('train', train_idx, train_angles), ('test', valid_idx, valid_angles)
+            ):
+                for name, values in (('images', images[indices]), ('labels', labels[indices]),
+                                     ('angles', transformed), ('ids', ids[indices])):
+                    np.save(folder / f'{prefix}_{name}_{fold_idx}.npy', values)
+
     def process_train_data(self, source_name, convert_func):
-        data = pd.read_json(f'{self.config.DATA_DIR}/download/train.json')
-        images = convert_func(data[['band_1', 'band_2']])
-        angles = self.process_angles(data['inc_angle'])
-        labels = np.array(data['is_iceberg'].values)
-        ids = np.array(data['id'].values)
-        
+        data = pd.read_json(Path(self.config.DATA_DIR) / 'download/train.json')
+        images = convert_func(data)
+        angles = data['inc_angle'].to_numpy()
+        labels = data['is_iceberg'].to_numpy(dtype=np.float32)
+        ids = data['id'].to_numpy(dtype=str)
         self.create_folds(images, labels, angles, ids, source_name)
         return images, angles, labels, ids
-    
+
     def process_test_data(self, source_name, convert_func):
-        data = pd.read_json(f'{self.config.DATA_DIR}/download/test.json')
-        images = convert_func(data[['band_1', 'band_2']])
-        angles = self.process_angles(data['inc_angle'])
-        ids = np.array(data['id'].values)
-        
-        os.makedirs(f'{self.config.DATA_DIR}/{source_name}/score', exist_ok=True)
-        np.save(f'{self.config.DATA_DIR}/{source_name}/score/images', images)
-        np.save(f'{self.config.DATA_DIR}/{source_name}/score/angles', angles)
-        np.save(f'{self.config.DATA_DIR}/{source_name}/score/ids', ids)
-        
-        return images, angles, ids
+        data = pd.read_json(Path(self.config.DATA_DIR) / 'download/test.json')
+        images = convert_func(data)
+        ids = data['id'].to_numpy(dtype=str)
+        folder = Path(self.config.DATA_DIR) / source_name / 'score'
+        folder.mkdir(parents=True, exist_ok=True)
+        np.save(folder / 'images.npy', images)
+        np.save(folder / 'ids.npy', ids)
+        all_angles = []
+        for fold_idx in range(1, self.config.FOLDS + 1):
+            stats_file = folder.parent / 'train' / f'angle_stats_{fold_idx}.json'
+            stats = json.loads(stats_file.read_text())
+            angles, _ = self.process_angles(data['inc_angle'], stats)
+            np.save(folder / f'angles_{fold_idx}.npy', angles)
+            all_angles.append(angles)
+        return images, np.asarray(all_angles), ids

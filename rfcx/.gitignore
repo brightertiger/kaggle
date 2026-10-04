@@ -127,3 +127,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Local competition data and generated artifacts
+sample_data/
+dry_run_output/
+output/
+data/
+models/
+predictions/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

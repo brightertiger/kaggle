@@ -1,90 +1,54 @@
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
+from sklearn.model_selection import StratifiedKFold
 from .config import Config
 
+
 class AdversarialGenerator:
-    def __init__(self):
-        self.lgb_params = Config.LGB_PARAMS
-        self.use_features = Config.USE_FEATURES
-    
+    def __init__(self, config=None):
+        self.config = config or Config()
+        self.lgb_params = self.config.LGB_PARAMS
+        self.use_features = self.config.USE_FEATURES
+
     def create_adversarial_data(self, train_path, valid_path, test_path, output_path):
-        train = pd.read_csv(train_path)
-        valid = pd.read_csv(valid_path)
-        test = pd.read_csv(test_path)
-        
+        train, valid, test = [pd.read_csv(p) for p in (train_path, valid_path, test_path)]
         data = pd.concat([train, valid, test], ignore_index=True)
-        labels = [0] * len(train) + [1] * (len(valid) + len(test))
-        data['label'] = labels
-        data = data.sample(frac=1., random_state=Config.SEED).reset_index(drop=True)
-        
-        cv_results = []
-        
-        for fold in range(Config.N_FOLDS):
-            train_data = data[data.index % Config.N_FOLDS != fold].reset_index(drop=True)
-            valid_data = data[data.index % Config.N_FOLDS == fold].reset_index(drop=True)
-            
-            train_matrix = lgb.Dataset(
-                train_data[self.use_features], 
-                np.array(train_data['label']).reshape(-1,)
-            )
-            valid_matrix = lgb.Dataset(
-                valid_data[self.use_features], 
-                np.array(valid_data['label']).reshape(-1,)
-            )
-            
+        # Predict domain membership, never toxicity: target-like rows get weight.
+        labels = np.r_[np.zeros(len(train), dtype=int), np.ones(len(valid) + len(test), dtype=int)]
+        scores = np.zeros(len(data))
+        cv = StratifiedKFold(self.config.N_FOLDS, shuffle=True, random_state=self.config.SEED)
+        for train_idx, valid_idx in cv.split(data, labels):
+            train_matrix = lgb.Dataset(data.iloc[train_idx][self.use_features], labels[train_idx])
+            valid_matrix = lgb.Dataset(data.iloc[valid_idx][self.use_features], labels[valid_idx])
             model = lgb.train(
-                params=self.lgb_params,
-                train_set=train_matrix,
-                valid_sets=[train_matrix, valid_matrix],
-                num_boost_round=250,
-                early_stopping_rounds=50,
-                verbose_eval=50
+                params=self.lgb_params, train_set=train_matrix, valid_sets=[valid_matrix],
+                num_boost_round=self.config.LGB_ROUNDS,
+                callbacks=[lgb.early_stopping(self.config.LGB_EARLY_STOPPING, verbose=False)],
             )
-            
-            valid_scores = model.predict(valid_data[self.use_features])
-            
-            fold_result = valid_data[['id', 'source', 'lang']].copy()
-            fold_result['score'] = valid_scores
-            cv_results.append(fold_result)
-        
-        combined_results = pd.concat(cv_results, ignore_index=True)
-        combined_results.to_csv(output_path, index=False)
-        
-        return combined_results
-    
+            scores[valid_idx] = model.predict(
+                data.iloc[valid_idx][self.use_features],
+                num_threads=self.lgb_params.get('num_threads', 1),
+            )
+        # Keep text and existing labels; held-out/test rows must not enter training.
+        result = train.drop(columns=self.use_features).copy()
+        result['score'] = scores[:len(train)]
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        result.to_csv(output_path, index=False)
+        return result
+
     def generate_all_adversarial_data(self, data_dir):
+        root = Path(data_dir)
         datasets = [
-            {
-                'name': 'English',
-                'train': f'{data_dir}/english/train_english_embed.csv',
-                'valid': f'{data_dir}/english/valid_english_embed.csv',
-                'test': f'{data_dir}/english/test_english_embed.csv',
-                'output': f'{data_dir}/english/adverse.csv'
-            },
-            {
-                'name': 'Subtitle',
-                'train': f'{data_dir}/subtitle/subtitle_embed.csv',
-                'valid': f'{data_dir}/foreign/valid_foreign_embed.csv',
-                'test': f'{data_dir}/foreign/test_foreign_embed.csv',
-                'output': f'{data_dir}/subtitle/adverse.csv'
-            },
-            {
-                'name': 'Translation',
-                'train': f'{data_dir}/foreign/train_foreign_embed.csv',
-                'valid': f'{data_dir}/foreign/valid_foreign_embed.csv',
-                'test': f'{data_dir}/foreign/test_foreign_embed.csv',
-                'output': f'{data_dir}/foreign/adverse.csv'
-            }
+            ('english', 'english/train_english', 'english/valid_english', 'english/test_english'),
+            ('subtitle', 'subtitle/subtitle', 'foreign/valid_foreign', 'foreign/test_foreign'),
+            ('foreign', 'foreign/train_foreign', 'foreign/valid_foreign', 'foreign/test_foreign'),
         ]
-        
-        for dataset in datasets:
-            print(f"Generating adversarial data for {dataset['name']}...")
-            self.create_adversarial_data(
-                dataset['train'],
-                dataset['valid'],
-                dataset['test'],
-                dataset['output']
-            )
-        
-        print("All adversarial data generated successfully!")
+        for name, train, valid, test in datasets:
+            train_path = root / f'{train}_embed.csv'
+            if name != 'english' and not train_path.exists():
+                print(f'Skipping optional {name} domain weights: no input dataset')
+                continue
+            self.create_adversarial_data(train_path, root / f'{valid}_embed.csv',
+                                         root / f'{test}_embed.csv', root / name / 'adverse.csv')

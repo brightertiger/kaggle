@@ -5,13 +5,10 @@ This script demonstrates how to use the refactored pipeline for
 training models and generating predictions.
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(__file__))
+from pathlib import Path
 
 from src.pipeline import IcebergPipeline
-from src.models import CNNBasic, CNNAdvanced, VGG16Model
+from src.models import CNNBasic
 from src.data_utils import DataProcessor
 from src.feature_engineering import FeatureEngineer
 from src.config import Config
@@ -39,8 +36,8 @@ def example_individual_components():
     # Create XGBoost features
     print("Creating XGBoost features...")
     feature_engineer.create_xgboost_features(
-        'data/download/train.json',
-        'data/download/test.json'
+        Path(config.DATA_DIR) / 'download/train.json',
+        Path(config.DATA_DIR) / 'download/test.json'
     )
 
 def example_model_training():
@@ -52,6 +49,10 @@ def example_model_training():
     config = Config()
     trainer = ModelTrainer(config)
     
+    processor = DataProcessor(config)
+    processor.process_train_data('source_1', processor.convert_images_source1)
+    processor.process_test_data('source_1', processor.convert_images_source1)
+
     # Train CNN Basic model
     cnn_basic = CNNBasic(config)
     trainer.train_model(
@@ -70,7 +71,7 @@ def example_prediction():
     config = Config()
     predictor = ModelPredictor(config)
     
-    # Generate predictions
+    # Requires the checkpoints from example_model_training().
     cnn_basic = CNNBasic(config)
     predictor.predict_test_set(cnn_basic, 'cnn_basic', 'source_1')
     predictor.predict_cv_set(cnn_basic, 'cnn_basic', 'source_1')

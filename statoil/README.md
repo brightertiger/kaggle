@@ -1,210 +1,235 @@
-# Statoil Iceberg Classifier Challenge
+# [Statoil Iceberg Classifier Challenge](https://www.kaggle.com/c/statoil-iceberg-classifier-challenge)
 
-A comprehensive deep learning solution for the Statoil Iceberg Classifier Challenge on Kaggle, featuring advanced CNN architectures, ensemble methods, and feature engineering techniques.
+Final rank: not documented / Teams: not documented / Medal: not documented in the portfolio index.
 
-## 🏆 Competition Overview
+I approached iceberg detection as a combination of radar image classification,
+incidence-angle metadata, and statistical image features. This folder preserves
+that method: custom CNNs, VGG16 transfer learning, and XGBoost stacking.
+It is a runnable reconstruction of the solution, not a claim to reproduce a
+verified leaderboard score. Historical predictions and experiment logs are not included.
 
-The Statoil Iceberg Classifier Challenge was a computer vision competition where participants were tasked with distinguishing between icebergs and ships in satellite images. The challenge involved:
+## Problem
 
-- **Dataset**: 75x75 pixel satellite images with two radar bands (HH and HV)
-- **Target**: Binary classification (iceberg vs ship)
-- **Evaluation**: Log Loss metric
-- **Challenge**: Limited training data (~1600 images) with high class imbalance
+The task was to distinguish icebergs from ships in satellite radar patches.
+For each test image, I needed to predict the probability of `is_iceberg`,
+with `1` representing an iceberg and `0` a ship.
 
-## 🚀 Solution Architecture
+The metric is binary log loss. Confident mistakes are expensive, so useful
+validation probabilities matter more than a hard classification threshold.
+Radar texture can be noisy, the labeled set is small, and similar-looking
+objects need to be separated without the familiar color cues of photographs.
 
-### 1. Data Preprocessing Pipeline
+## Data
 
-The solution implements two distinct image transformation strategies:
+The pipeline expects the competition JSON records:
 
-#### Source 1: Difference-based Features
-- **Transform 1**: Absolute difference between vertical and horizontal bands
-- **Transform 2**: Maximum of both bands
-- **Transform 3**: Minimum of both bands
-- **Normalization**: Z-score normalization for each channel
+- `id`: the record identifier used to align predictions and submissions.
+- `band_1`, `band_2`: flattened radar bands, each reshaped to `75 × 75`.
+- `inc_angle`: incidence angle, sometimes represented by the string `"na"`.
+- `is_iceberg`: the binary target, present only in training records.
 
-#### Source 2: Averaging-based Features
-- **Channel 1**: Normalized vertical band
-- **Channel 2**: Normalized horizontal band  
-- **Channel 3**: Normalized average of both bands
+These are radar measurements, not RGB images. I construct three channels
+from the two bands before passing them to the neural networks.
+The handcrafted feature branch works directly on the original band values.
 
-### 2. Model Architectures
+Missing angles need explicit handling. Constant image channels also need a
+safe normalization denominator. I do not assume a class ratio or claim a
+verified leakage pattern from the artifacts in this folder.
 
-#### CNN Basic Model
-- **Architecture**: Custom CNN with Swish activation
-- **Layers**: 6 convolutional layers with BatchNorm and MaxPooling
-- **Regularization**: Dropout (0.3) and Batch Normalization
-- **Input**: 75x75x3 images + incidence angle
-- **Output**: Sigmoid activation for binary classification
+## Approach
 
-#### CNN Advanced Model
-- **Architecture**: Deeper CNN with enhanced regularization
-- **Features**: Additional data augmentation (shift, zoom, rotation)
-- **Training**: Extended epochs (150) with patience-based early stopping
+### Validation
 
-#### VGG16 Transfer Learning Model
-- **Base Model**: Pre-trained VGG16 with frozen weights
-- **Strategy**: Two-stage training (frozen → fine-tuned)
-- **Learning Rates**: 1e-4 (frozen) → 5e-5 (fine-tuned)
-- **Architecture**: VGG16 backbone + custom classification head
+I use shuffled, stratified five-fold validation with a fixed seed.
+All neural models share the same row splits, producing one out-of-fold (OOF)
+probability per training record. Test probabilities are averaged across folds.
 
-### 3. Ensemble Methods
+In this reconstruction, angle imputation and scaling are fitted only on each
+fold's training rows. The same saved statistics transform its validation and
+test rows. Missing angles use the training mean; an entirely missing training
+angle column and zero-range angles have finite fallbacks.
 
-#### Simple Stacking
-- **Method**: Adaptive ensemble based on prediction confidence
-- **Logic**: 
-  - If all predictions < threshold → use minimum
-  - If all predictions > threshold → use maximum  
-  - Otherwise → use mean
-- **Thresholds**: Optimized via grid search (15%-95%)
+OOF and test tables are aligned by `id` before blending or stacking.
+The printed neural and confidence-blend losses are local validation metrics.
+The XGBoost cross-validation step selects a boosting length; because it reuses
+existing neural OOF features, it is not an independent nested-CV estimate of
+stacking performance.
 
-#### XGBoost Stacking
-- **Features**: Statistical features from image analysis
-- **Engineering**: 246 hand-crafted features including:
-  - Basic statistics (mean, std, min, max, median)
-  - Texture features (Laplacian, Sobel filters)
-  - Distribution features (kurtosis, skewness)
-  - Histogram-based features
-  - Polynomial feature interactions
+### Radar preprocessing
 
-### 4. Feature Engineering
+I retain both channel recipes from the solution:
 
-The XGBoost model leverages sophisticated feature engineering:
+- **Source 1:** absolute band difference, elementwise maximum, elementwise minimum.
+- **Source 2:** second band, first band, and their arithmetic mean.
 
-- **Statistical Features**: Mean, standard deviation, min/max, median
-- **Texture Analysis**: Laplacian and Sobel edge detection
-- **Distribution Metrics**: Kurtosis and skewness
-- **Histogram Features**: 20-bin histograms with statistical summaries
-- **Polynomial Features**: Cross-channel interactions and combinations
+Each channel is standardized within its own image. The default neural training
+path uses source 1 for all three architectures. Source 2 remains available as
+an alternative representation through the component API; preparing it does
+not imply that another set of models is trained automatically.
 
-## 📊 Performance Results
-
-- **Individual Models**: 
-  - CNN Basic: ~0.18 Log Loss
-  - CNN Advanced: ~0.17 Log Loss  
-  - VGG16: ~0.16 Log Loss
-- **Ensemble Performance**: ~0.15 Log Loss
-- **Final Submission**: Top 10% leaderboard position
-
-## 🛠️ Technical Implementation
-
-### Project Structure
+```mermaid
+flowchart TD
+    A[Train and test JSON] --> B[Radar channel transforms]
+    A --> C[Band statistics and angle]
+    B --> D[Stratified folds and fold-local angle scaling]
+    D --> E[Basic CNN]
+    D --> F[Advanced CNN]
+    D --> G[VGG16: frozen then fine-tuned]
+    E --> H[OOF and fold-averaged test probabilities]
+    F --> H
+    G --> H
+    H --> I[Confidence blend]
+    H --> J[XGBoost stacker]
+    C --> J
+    I --> K[ensemble.csv]
+    J --> L[xgboost.csv]
 ```
+
+### Neural models
+
+The basic CNN uses six convolution layers, batch normalization, Swish
+activations, max pooling, and dropout. Its flattened image representation
+is concatenated with a learned scalar representation of the incidence angle.
+Dense layers produce a sigmoid probability.
+
+The advanced CNN retains the same image-plus-angle idea with paired
+valid-padding convolutions and a different dense head. Its augmentation
+includes translations as well as flips, rotations, and zoom.
+
+VGG16 uses an ImageNet-initialized convolutional backbone with global max
+pooling and an angle-aware classification head. I first train the head with
+the backbone frozen, then unfreeze it at a lower learning rate.
+The default learning rates are `1e-4` and `5e-5` respectively.
+
+Training uses Adam and binary cross-entropy. Validation loss controls early
+stopping, learning-rate reduction, and best-weight checkpoints. The best
+checkpoint is retained across the frozen and fine-tuning stages.
+Image augmentation keeps each image paired with its original angle and label.
+
+### Statistical features and stacking
+
+I compute intensity summaries, Laplacian and Sobel variation, skewness,
+kurtosis, histograms, and cross-channel interactions. The original selected
+feature indices are retained, alongside incidence angle. Non-finite summary
+values receive a sentinel so constant patches do not break tree training.
+
+The confidence blend uses the minimum probability when every model predicts
+below `0.15`, the maximum when every model predicts above `0.95`, and the mean
+otherwise. Probabilities are clipped before writing the blended submission.
+These are inherited thresholds; this repository contains no threshold-search
+results establishing that they are optimal.
+
+The XGBoost branch combines selected statistical features with neural OOF
+scores for training and fold-averaged scores for test prediction. IDs and
+labels are explicitly excluded from its feature matrix. The full pipeline
+now writes both the confidence blend and the XGBoost submission.
+
+## What mattered most
+
+These are the central design choices I preserved, rather than measured
+ablation gains; the original experiment evidence is not available here.
+
+- Compare the radar bands explicitly instead of treating them as natural color.
+- Give the models incidence angle alongside the image representation.
+- Use stratified OOF predictions to build and inspect the ensemble.
+- Regularize the CNNs with augmentation, dropout, and validation checkpoints.
+- Combine learned image probabilities with statistical radar summaries.
+
+## Repository layout
+
+```text
 statoil/
+├── README.md                  # Solution story, limitations, and run instructions
+├── requirements.txt           # Direct runtime dependencies
+├── .gitignore                 # Local data, checkpoints, caches, and output exclusions
+├── main.py                    # Configurable full-pipeline and individual-stage CLI
+├── example_usage.py           # Python API examples for full and component runs
+├── dry_run.py                 # Synthetic data generation and end-to-end assertions
 ├── src/
-│   ├── __init__.py
-│   ├── config.py              # Configuration parameters
-│   ├── data_utils.py          # Data preprocessing utilities
-│   ├── models.py              # Model architectures
-│   ├── trainer.py             # Training pipeline
-│   ├── predictor.py           # Prediction utilities
-│   ├── feature_engineering.py # Feature extraction
-│   └── pipeline.py            # Main pipeline orchestration
-├── main.py                    # Entry point
-├── requirements.txt           # Dependencies
-└── README.md                  # This file
+│   ├── __init__.py            # Package marker
+│   ├── config.py              # Production defaults and small-run overrides
+│   ├── data_utils.py          # Radar transforms, folds, and saved angle statistics
+│   ├── feature_engineering.py # Statistical feature extraction and selected CSVs
+│   ├── models.py              # CNNs, VGG16, confidence blend, and XGBoost
+│   ├── trainer.py             # Augmentation, training stages, and checkpoints
+│   ├── predictor.py           # Fold inference, OOF evaluation, and per-model CSVs
+│   └── pipeline.py            # Stage orchestration and ID-aligned stacking
+├── sample_data/               # Generated synthetic JSON, folds, and feature tables
+└── dry_run_output/            # Generated smoke-test weights and submissions
 ```
 
-### Key Features
+## How to run
 
-- **Modular Design**: Clean separation of concerns with dedicated modules
-- **Configuration Management**: Centralized config for easy parameter tuning
-- **Cross-Validation**: 5-fold stratified CV for robust evaluation
-- **Data Augmentation**: Comprehensive augmentation strategies
-- **Model Checkpointing**: Automatic model saving and early stopping
-- **Parallel Processing**: Multi-core feature extraction
-- **Memory Management**: Efficient data handling with garbage collection
+Use Python 3.11 and install the dependencies from this directory:
 
-## 🚀 Getting Started
-
-### Prerequisites
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### Data Setup
-1. Download the competition data to `data/download/`
-2. Ensure the following files are present:
-   - `train.json`
-   - `test.json`
+Extract the real competition files into this layout:
 
-### Running the Pipeline
+```text
+data/
+└── download/
+    ├── train.json
+    └── test.json
+```
+
+Run the complete pipeline:
+
 ```bash
-python main.py
+python main.py --data-dir data --model-dir models --submission-dir submissions
 ```
 
-### Individual Components
-```python
-from src.pipeline import IcebergPipeline
+The default VGG16 training run downloads ImageNet weights if they are not
+cached. Use `--no-pretrained` for random initialization and `--cpu` to disable
+GPU use. This changes initialization, so it is not equivalent to transfer learning.
 
-# Initialize pipeline
-pipeline = IcebergPipeline()
+The CLI also supports `--folds`, `--epochs`, `--batch-size`,
+`--steps-per-epoch`, and `--feature-workers`. Use `python main.py --help`
+for the complete interface. Individual stages follow this dependency order:
 
-# Run specific components
-pipeline.prepare_data()
-pipeline.train_models()
-pipeline.generate_predictions()
-pipeline.create_ensemble()
+```bash
+python main.py --stage prepare
+python main.py --stage features
+python main.py --stage train
+python main.py --stage predict
+python main.py --stage ensemble
+python main.py --stage xgboost
 ```
 
-## 🔬 Technical Insights
+Reuse the same directories and configuration between stages. Preparation
+writes transformed arrays and angle statistics under the data directory.
+Training writes `.weights.h5` checkpoints under the model directory.
+Prediction writes OOF tables under `data/model/` and submission CSVs under
+`submissions/`, each with `id,is_iceberg` columns. Full-data training is costly;
+use the dry run first to verify the environment.
 
-### Data Challenges
-- **Limited Training Data**: Only ~1600 images required careful regularization
-- **Class Imbalance**: Ships vs icebergs ratio needed balanced sampling
-- **Image Quality**: Satellite radar images with noise and artifacts
+### Synthetic CPU dry run
 
-### Solution Strategies
-- **Ensemble Diversity**: Different architectures capture complementary patterns
-- **Transfer Learning**: VGG16 provided robust feature extraction
-- **Feature Engineering**: Hand-crafted features improved XGBoost performance
-- **Adaptive Stacking**: Confidence-based ensemble improved robustness
+```bash
+python dry_run.py
+```
 
-### Lessons Learned
-- **Data Augmentation**: Critical for small datasets
-- **Model Diversity**: Different architectures improve ensemble performance
-- **Feature Engineering**: Domain knowledge enhances model performance
-- **Cross-Validation**: Essential for reliable performance estimation
+The script creates competition-shaped JSON under `sample_data/download/`,
+including missing angles and constant radar patches. It runs both channel
+recipes, statistical feature extraction, both CNNs, frozen and fine-tuned
+VGG training, checkpoint reloads, OOF inference, blending, and XGBoost.
+It checks submission IDs, columns, finite probabilities, and complete OOF coverage.
 
-## 📈 Model Performance Analysis
+For speed, it uses two folds, a single training step per stage, reduced
+channel widths, and resized network inputs. Its VGG has the same block
+structure with narrower random-initialized layers; no pretrained weights
+are downloaded. Production architecture sizes and initialization defaults
+remain unchanged. Nothing in the pipeline is skipped, but this is an
+execution check, not a performance benchmark or full-scale training test.
+Generated inputs and outputs are ignored by the local `.gitignore`.
 
-### Individual Model Strengths
-- **CNN Basic**: Fast training, good baseline performance
-- **CNN Advanced**: Better generalization with enhanced regularization
-- **VGG16**: Strong feature extraction, best individual performance
+## Lessons / what I'd do differently
 
-### Ensemble Benefits
-- **Reduced Variance**: Multiple models reduce prediction uncertainty
-- **Improved Robustness**: Different architectures handle edge cases
-- **Better Calibration**: Ensemble predictions more reliable
-
-## 🎯 Future Improvements
-
-- **Advanced Architectures**: ResNet, EfficientNet, Vision Transformers
-- **Pseudo-Labeling**: Leverage test set for semi-supervised learning
-- **Advanced Augmentation**: Mixup, CutMix, AutoAugment
-- **Neural Architecture Search**: Automated architecture optimization
-- **Multi-Scale Features**: Different image resolutions and scales
-
-## 📚 References
-
-- [Statoil Iceberg Classifier Challenge](https://www.kaggle.com/c/statoil-iceberg-classifier-challenge)
-- [VGG16 Paper](https://arxiv.org/abs/1409.1556)
-- [XGBoost Documentation](https://xgboost.readthedocs.io/)
-- [Keras Documentation](https://keras.io/)
-
-## 👨‍💻 Author
-
-**Ujjwal Singh Rao**
-- LinkedIn: [linkedin.com/in/brightertiger](https://linkedin.com/in/brightertiger)
-- GitHub: [github.com/brightertiger](https://github.com/brightertiger)
-
-This solution was developed as part of a comprehensive machine learning portfolio, demonstrating expertise in:
-- Deep Learning and Computer Vision
-- Ensemble Methods and Model Stacking
-- Feature Engineering and Data Preprocessing
-- MLOps and Pipeline Development
-
----
-
-*This project showcases advanced machine learning techniques applied to a real-world computer vision challenge, highlighting both technical depth and practical implementation skills.*
+- I would preserve predictions, fold assignments, and ablation logs alongside
+  each experiment so historical performance claims remain auditable.
+- I would evaluate the stacker with an outer validation split before treating
+  its internal cross-validation result as evidence of improvement.
+- I would test confidence thresholds and the alternative radar representation
+  under the same validation protocol before expanding the ensemble.

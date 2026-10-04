@@ -4,7 +4,7 @@ from sklearn.model_selection import StratifiedKFold
 from typing import Dict, Any, List
 import os
 from .config import Config, get_config
-from .data_utils import create_data_loaders, create_submission_dataset
+from .data_utils import create_data_loaders, create_submission_dataset, read_data
 from .trainer import TweetTrainer
 from .evaluator import TweetScorer, TweetEvaluator
 
@@ -17,7 +17,9 @@ class TweetSentimentPipeline:
         self.evaluator = TweetEvaluator(self.config)
     
     def create_folds(self, data_path: str) -> str:
-        data = pd.read_csv(data_path)
+        data = read_data(data_path, labeled=True)
+        if data.empty or data['sentiment'].value_counts().min() < self.config.data.n_folds:
+            raise ValueError('Each sentiment needs at least n_folds labeled rows')
         data['subset'] = -1
         
         skf = StratifiedKFold(
@@ -32,12 +34,15 @@ class TweetSentimentPipeline:
             fold += 1
         
         processed_path = os.path.join(self.config.data.processed_path, 'train.csv')
+        os.makedirs(self.config.data.processed_path, exist_ok=True)
         data.to_csv(processed_path, index=False)
+        self.config.data.train_path = processed_path
         
         print(f"Created {self.config.data.n_folds} folds. Data saved to {processed_path}")
         return processed_path
     
     def train_all_folds(self, data_path: str) -> Dict[str, float]:
+        self.config.data.train_path = data_path
         fold_scores = {}
         
         for fold in range(self.config.data.n_folds):
@@ -52,17 +57,16 @@ class TweetSentimentPipeline:
         return fold_scores
     
     def evaluate_all_folds(self, data_path: str) -> Dict[str, float]:
+        self.config.data.train_path = data_path
         fold_scores = {}
         
         for fold in range(self.config.data.n_folds):
             print(f"\nEvaluating fold {fold}")
             
-            train_loader, valid_loader = create_data_loaders(self.config, fold)
+            _, valid_loader = create_data_loaders(self.config, fold)
             predictions = self.scorer.predict_fold(fold, valid_loader)
             
-            valid_data = pd.read_csv(data_path)
-            valid_data = valid_data[valid_data['subset'] == fold]
-            valid_data = valid_data[['text', 'sentiment']].reset_index(drop=True)
+            valid_data = valid_loader.dataset.data
             
             score = self.evaluator.evaluate_fold(fold, valid_data, predictions)
             fold_scores[f'fold_{fold}'] = score
@@ -72,7 +76,7 @@ class TweetSentimentPipeline:
         return fold_scores
     
     def run_full_pipeline(self, data_path: str) -> Dict[str, Any]:
-        print("Starting Tweet Sentiment Analysis Pipeline")
+        print("Starting Tweet Sentiment Extraction Pipeline")
         print("=" * 50)
         
         processed_data_path = self.create_folds(data_path)
@@ -108,10 +112,15 @@ class TweetSentimentPipeline:
         
         ensemble_predictions = self._ensemble_predictions(all_predictions)
         
-        test_data = pd.read_csv(test_path)
+        test_data = test_loader.dataset.data
+        selected_text = []
+        for row, prediction in zip(test_data.itertuples(), ensemble_predictions.itertuples()):
+            offsets = self.evaluator.get_offsets(row.text, row.sentiment)
+            selected_text.append(self.evaluator.extract_selected_text(
+                row.text, prediction.start_pred, prediction.end_pred, offsets))
         submission = pd.DataFrame({
             'textID': test_data['textID'],
-            'selected_text': ensemble_predictions['selected_text']
+            'selected_text': selected_text
         })
         
         return submission
