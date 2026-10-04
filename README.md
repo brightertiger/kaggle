@@ -81,7 +81,6 @@ Ranks and team counts marked — are not documented.
 - **Computer Vision**: Medical imaging, segmentation, classification
 - **Audio Processing**: Species detection, spectrograms
 - **Fraud Detection**: Click fraud, ad tracking
-- **Recommendation Systems**: Market basket analysis
 
 ## Repository structure
 
