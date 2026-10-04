@@ -1,460 +1,110 @@
-/* Minimalistic Portfolio Styles */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
 :root {
-    --text-color: #333;
-    --text-light: #666;
-    --text-muted: #999;
-    --border-color: #e1e1e1;
-    --bg-color: #fff;
-    --link-color: #0066cc;
-    --link-hover: #004499;
+  color-scheme: light;
+  --ink: #242424;
+  --body: #4c4c4c;
+  --muted: #707070;
+  --line: #e8e8e8;
+  --serif: Georgia, "Times New Roman", serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: #fff;
+  font-synthesis: none;
 }
 
-body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    line-height: 1.6;
-    color: var(--text-color);
-    background-color: var(--bg-color);
-    font-size: 16px;
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-size: 16px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+::selection { background: #e4e4e4; color: #111; }
+a { color: inherit; text-decoration-color: #b5b5b5; text-underline-offset: 4px; }
+a:hover { color: #000; text-decoration-color: currentColor; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; border-radius: 2px; }
+p, li { color: var(--body); }
+a, p, li, h1, h2, h3, h4, h5, h6 { overflow-wrap: anywhere; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 400; line-height: 1.35; color: var(--ink); }
+h2 { font-size: 24px; }
+h3 { font-size: 20px; }
+.container { width: min(100%, clamp(808px, 56vw, 1040px)); margin-inline: auto; padding-inline: 16px; }
+.site-header { padding-top: 40px; }
+.site-header .container { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; }
+.name { font-family: var(--serif); font-size: 28px; font-weight: 400; letter-spacing: -0.8px; line-height: 1.3; color: var(--ink); }
+.tagline { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.profile-links, .entry-links, .medal-nav { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 14px; color: var(--body); }
+.profile-links a, .entry-links a, .medal-nav a { display: inline-block; padding-block: 4px; }
+main { padding-bottom: 64px; }
+section { margin-top: 40px; }
+.summary { margin-top: 36px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; padding-bottom: 12px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.section-note, .entry-meta, .tech-tags { font-size: 13px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.medal-summary { margin-top: 16px; font-size: 14px; }
+.medal-nav { margin-top: 12px; gap: 4px 16px; }
+.medal-nav > span { padding-block: 4px; color: var(--muted); }
+[id] { scroll-margin-top: 24px; }
+.competition-list { padding-left: 28px; }
+.competition-entry { padding-left: 8px; }
+.competition-entry::marker { font-family: Georgia, "Times New Roman", serif; font-size: 13px; color: var(--muted); }
+.competition-entry + .competition-entry { margin-top: 32px; }
+.entry-meta { margin-top: 4px; }
+.entry-description { margin-top: 8px; font-size: 15px; }
+.tech-tags { list-style: none; display: flex; flex-wrap: wrap; gap: 0 12px; margin-top: 8px; }
+.tech-tags li { color: inherit; }
+.tech-tags li + li::before { content: "·"; margin-right: 12px; }
+.entry-links { margin-top: 4px; font-size: 13px; }
+.site-footer { padding-bottom: 40px; font-size: 13px; color: var(--muted); }
+.site-footer .container { position: relative; display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; padding-top: 20px; }
+.site-footer .container::before { content: ""; position: absolute; top: 0; left: 16px; right: 16px; border-top: 1px solid var(--line); }
+.site-footer .profile-links { font-size: inherit; color: inherit; }
+.skip-link { position: absolute; top: 8px; left: 16px; padding: 4px 8px; background: #fff; transform: translateY(-200%); }
+.skip-link:focus { transform: none; }
+
+/* The same reading column and spacing continue into the solution articles. */
+.article-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; margin-block: 36px 32px; padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--body); }
+.prose { min-width: 0; }
+.prose h1 { font-size: 30px; margin-bottom: 24px; }
+.prose h2 { margin-top: 40px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.prose h3 { margin-top: 32px; }
+.prose h4, .prose h5, .prose h6 { margin-top: 24px; font-size: 16px; font-weight: 600; }
+.prose p, .prose ul, .prose ol, .prose dl { margin-top: 16px; }
+.prose ul, .prose ol { padding-left: 24px; }
+.prose li + li { margin-top: 8px; }
+.prose li::marker { color: var(--muted); }
+.prose li > ul, .prose li > ol { margin-top: 8px; }
+.prose dt { font-weight: 600; }
+.prose dd { margin-left: 24px; }
+.prose img, .prose video, .prose svg { max-width: 100%; height: auto; }
+.prose iframe { max-width: 100%; }
+.prose code, .prose pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+.prose :not(pre) > code { padding: 2px 4px; background: #f5f5f5; overflow-wrap: anywhere; }
+.prose pre { max-width: 100%; overflow-x: auto; margin-block: 24px; padding: 16px; border: 1px solid var(--line); background: #fafafa; line-height: 1.6; white-space: pre; overflow-wrap: normal; }
+.prose pre code { white-space: inherit; overflow-wrap: normal; }
+.prose blockquote { margin-block: 24px; padding-left: 20px; border-left: 2px solid var(--line); color: var(--muted); }
+.prose blockquote p { color: inherit; }
+.table-scroll { max-width: 100%; overflow-x: auto; margin-block: 24px; }
+.prose table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
+.prose th, .prose td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; min-width: 112px; }
+.prose th { font-weight: 600; color: var(--ink); }
+.prose td { color: var(--body); }
+.prose hr { margin-block: 32px; border: 0; border-top: 1px solid var(--line); }
+.prose .mermaid { background: #fff; }
+
+@media (min-width: 601px) {
+  .container { padding-inline: 32px; }
+  .site-header { padding-top: 72px; }
+  .name { font-size: 32px; }
+  section { margin-top: 52px; }
+  .summary { margin-top: 36px; }
+  .site-footer .container::before { left: 32px; right: 32px; }
+  .prose h1 { font-size: 36px; }
 }
 
-.container {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 0 20px;
-}
-
-/* Header */
-.header {
-    padding: 60px 0 40px;
-    text-align: center;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.name {
-    font-size: 2.5rem;
-    font-weight: 600;
-    margin-bottom: 8px;
-    color: var(--text-color);
-}
-
-.tagline {
-    font-size: 1.1rem;
-    color: var(--text-light);
-    margin-bottom: 24px;
-}
-
-.links {
-    display: flex;
-    justify-content: center;
-    gap: 24px;
-    flex-wrap: wrap;
-}
-
-.links a {
-    color: var(--link-color);
-    text-decoration: none;
-    font-weight: 500;
-    transition: color 0.2s ease;
-}
-
-.links a:hover {
-    color: var(--link-hover);
-}
-
-/* About Section */
-.about {
-    padding: 40px 0;
-    text-align: center;
-}
-
-.about-text {
-    font-size: 1.1rem;
-    color: var(--text-light);
-    max-width: 600px;
-    margin: 0 auto;
-    line-height: 1.7;
-}
-
-/* Projects Section */
-.projects {
-    padding: 40px 0;
-    border-top: 1px solid var(--border-color);
-}
-
-.projects h2 {
-    font-size: 1.8rem;
-    font-weight: 600;
-    margin-bottom: 8px;
-    color: var(--text-color);
-}
-
-.projects-subtitle {
-    color: var(--text-muted);
-    margin-bottom: 40px;
-}
-
-.projects-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: 24px;
-}
-
-.project-card {
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 20px;
-    transition: all 0.2s ease;
-    background: var(--bg-color);
-}
-
-.project-card:hover {
-    border-color: var(--text-light);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.project-card.gold {
-    border-left: 4px solid #ffd700;
-}
-
-.project-card.silver {
-    border-left: 4px solid #c0c0c0;
-}
-
-.project-card.bronze {
-    border-left: 4px solid #cd7f32;
-}
-
-.project-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 12px;
-    gap: 12px;
-}
-
-.project-header h3 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--text-color);
-    margin: 0;
-    flex: 1;
-}
-
-.medal {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-light);
-    white-space: nowrap;
-}
-
-.project-description {
-    color: var(--text-light);
-    margin-bottom: 16px;
-    line-height: 1.6;
-    font-size: 0.95rem;
-}
-
-.project-tags {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-bottom: 16px;
-}
-
-.tag {
-    background-color: #f5f5f5;
-    color: var(--text-light);
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    font-weight: 500;
-}
-
-.project-links {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-}
-
-.project-links a {
-    color: var(--link-color);
-    text-decoration: none;
-    font-size: 0.9rem;
-    font-weight: 500;
-    transition: color 0.2s ease;
-}
-
-.project-links a:hover {
-    color: var(--link-hover);
-}
-
-/* Portfolio filters */
-.project-filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 12px;
-}
-
-[hidden] {
-    display: none !important;
-}
-
-.project-filters button {
-    font: inherit;
-    color: var(--text-light);
-    background: var(--bg-color);
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    padding: 6px 12px;
-    cursor: pointer;
-}
-
-.project-filters button[aria-pressed="true"] {
-    color: var(--link-color);
-    border-color: var(--link-color);
-}
-
-.project-filters button:focus-visible {
-    outline: 2px solid var(--link-color);
-    outline-offset: 2px;
-}
-
-.filter-status {
-    color: var(--text-light);
-    margin-bottom: 24px;
-}
-
-/* Shared competition write-up typography */
-.writeup-header {
-    padding: 32px 0;
-}
-
-.writeup {
-    padding-top: 40px;
-    padding-bottom: 48px;
-    overflow-wrap: anywhere;
-}
-
-.writeup h1,
-.writeup h2,
-.writeup h3,
-.writeup h4 {
-    line-height: 1.3;
-    margin: 1.5em 0 0.6em;
-    font-weight: 600;
-}
-
-.writeup h1:first-child {
-    margin-top: 0;
-}
-
-.writeup h1 { font-size: 2rem; }
-.writeup h2 { font-size: 1.5rem; }
-.writeup h3 { font-size: 1.2rem; }
-
-.writeup p,
-.writeup ul,
-.writeup ol,
-.writeup pre,
-.writeup table,
-.writeup blockquote {
-    margin-bottom: 1.2em;
-}
-
-.writeup ul,
-.writeup ol {
-    padding-left: 1.5em;
-}
-
-.writeup li { margin: 0.3em 0; }
-.writeup a { color: var(--link-color); }
-.writeup a:hover { color: var(--link-hover); }
-.writeup img { max-width: 100%; height: auto; }
-
-.writeup pre {
-    padding: 16px;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    overflow-x: auto;
-    background: var(--bg-color);
-    overflow-wrap: normal;
-}
-
-.writeup code {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 0.9em;
-}
-
-.writeup :not(pre) > code {
-    padding: 2px 4px;
-    border: 1px solid var(--border-color);
-    border-radius: 3px;
-}
-
-.writeup table {
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-    border-collapse: collapse;
-}
-
-.writeup th,
-.writeup td {
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    text-align: left;
-}
-
-.writeup blockquote {
-    border-left: 3px solid var(--border-color);
-    padding-left: 16px;
-    color: var(--text-light);
-}
-
-.writeup hr {
-    border: 0;
-    border-top: 1px solid var(--border-color);
-    margin: 24px 0;
-}
-
-.writeup .mermaid {
-    text-align: center;
-}
-
-/* Footer */
-.footer {
-    padding: 40px 0;
-    border-top: 1px solid var(--border-color);
-    text-align: center;
-}
-
-.footer-links {
-    display: flex;
-    justify-content: center;
-    gap: 24px;
-    flex-wrap: wrap;
-}
-
-.footer-links a {
-    color: var(--link-color);
-    text-decoration: none;
-    font-weight: 500;
-    transition: color 0.2s ease;
-}
-
-.footer-links a:hover {
-    color: var(--link-hover);
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .container {
-        padding: 0 16px;
-    }
-    
-    .name {
-        font-size: 2rem;
-    }
-    
-    .tagline {
-        font-size: 1rem;
-    }
-    
-    .links {
-        gap: 16px;
-    }
-    
-    .links a {
-        font-size: 0.95rem;
-    }
-    
-    .about-text {
-        font-size: 1rem;
-    }
-    
-    .projects h2 {
-        font-size: 1.5rem;
-    }
-    
-    .projects-grid {
-        grid-template-columns: 1fr;
-        gap: 20px;
-    }
-    
-    .project-card {
-        padding: 16px;
-    }
-    
-    .project-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
-    }
-    
-    .project-header h3 {
-        font-size: 1rem;
-    }
-    
-    .project-links {
-        flex-direction: column;
-        gap: 8px;
-    }
-    
-    .footer-links {
-        gap: 16px;
-    }
-}
-
-@media (max-width: 480px) {
-    .header {
-        padding: 40px 0 30px;
-    }
-    
-    .name {
-        font-size: 1.8rem;
-    }
-    
-    .links {
-        flex-direction: column;
-        gap: 12px;
-    }
-    
-    .footer-links {
-        flex-direction: column;
-        gap: 12px;
-    }
-}
-
-/* Smooth scrolling */
-html {
-    scroll-behavior: smooth;
-}
-
-/* Focus styles for accessibility */
-a:focus {
-    outline: 2px solid var(--link-color);
-    outline-offset: 2px;
-}
-
-/* Print styles */
 @media print {
-    .links,
-    .footer-links {
-        display: none;
-    }
-    
-    .header {
-        padding: 20px 0;
-    }
-    
-    .competition {
-        break-inside: avoid;
-    }
+  @page { margin: 16mm; }
+  body { font-size: 11pt; }
+  .container { width: 100%; padding: 0; }
+  .site-header { padding-top: 0; }
+  main { padding-bottom: 0; }
+  section { margin-top: 24px; }
+  .section-head, h1, h2, h3, h4 { break-after: avoid; }
+  .competition-entry { break-inside: avoid; }
+  .site-footer, .medal-nav, .skip-link { display: none; }
+  .prose pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .table-scroll { overflow: visible; }
 }

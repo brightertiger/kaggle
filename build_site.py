@@ -2,6 +2,7 @@
 """Render competition READMEs for GitHub Pages, or into an isolated --out tree."""
 
 import argparse
+from datetime import datetime, timezone
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -24,25 +25,42 @@ TEMPLATE = """<!DOCTYPE html>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{title} | Kaggle Portfolio</title>
-    <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&amp;display=swap">
+    <link rel="stylesheet" href="../styles.css?v={version}">
 </head>
 <body>
-    <header class="header writeup-header">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
         <div class="container">
-            <nav class="links" aria-label="Portfolio navigation">
-                <a href="../">← Back to portfolio</a>
+            <div>
+                <p class="name">Ujjwal Singh Rao</p>
+                <p class="tagline">Kaggle Master · ML Engineer · Data Scientist</p>
+            </div>
+            <nav class="profile-links" aria-label="Profiles">
+                <a href="https://www.kaggle.com/brightertiger" target="_blank" rel="noopener noreferrer">Kaggle</a>
+                <a href="https://github.com/brightertiger" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://linkedin.com/in/brightertiger" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+                <a href="https://brightertiger.xyz" target="_blank" rel="noopener noreferrer">Website</a>
             </nav>
         </div>
     </header>
-    <main class="container writeup">
-        <article>
+    <main id="main" class="container writeup">
+        <nav class="article-nav" aria-label="Write-up navigation">
+            <a href="../">← Back to portfolio</a>
+            <a href="{code_url}">View code on GitHub</a>
+        </nav>
+        <article class="prose">
 {content}
         </article>
     </main>
-    <footer class="footer">
-        <div class="container footer-links">
-            <a href="{code_url}">View code on GitHub</a>
+    <footer class="site-footer">
+        <div class="container">
+            <span>Ujjwal Singh Rao · Competition notes</span>
+            <nav class="profile-links" aria-label="More about the author">
+                <a href="https://github.com/brightertiger" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://linkedin.com/in/brightertiger" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+                <a href="https://brightertiger.xyz" target="_blank" rel="noopener noreferrer">Website</a>
+                <a href="https://kaggle.com/brightertiger" target="_blank" rel="noopener noreferrer">Kaggle</a>
+            </nav>
         </div>
     </footer>
 {mermaid_script}
@@ -78,7 +96,7 @@ class HeadingText(HTMLParser):
             self.parts.append(data)
 
 
-def render_page(source: str, competition: str) -> str:
+def render_page(source: str, competition: str, version: str) -> str:
     """Preserve folder-relative URLs and turn fenced Mermaid into diagram elements."""
     content = markdown.markdown(
         source, extensions=["fenced_code", "tables", "toc"], output_format="html"
@@ -86,15 +104,21 @@ def render_page(source: str, competition: str) -> str:
     # Work on Markdown's escaped code output, so diagram labels cannot become HTML.
     content, diagrams = re.subn(
         r'<pre><code class="language-mermaid">(.*?)</code></pre>',
-        r'<pre class="mermaid">\1</pre>',
+        r'<pre class="mermaid" tabindex="0">\1</pre>',
         content,
         flags=re.DOTALL,
     )
+    # Keep wide tables within a keyboard-accessible horizontal scroll region.
+    content = content.replace(
+        "<table>", '<div class="table-scroll" role="region" aria-label="Data table" tabindex="0"><table>'
+    ).replace("</table>", "</table></div>")
+    content = content.replace("<pre>", '<pre tabindex="0">')
     heading = HeadingText()
     heading.feed(content)
     title = "".join(heading.parts).strip() or competition
     return TEMPLATE.format(
         title=escape(title),
+        version=version,
         content=content,
         code_url=f"{GITHUB}/{competition}",
         mermaid_script=MERMAID_SCRIPT if diagrams else "",
@@ -102,17 +126,23 @@ def render_page(source: str, competition: str) -> str:
 
 
 def build(output: Path) -> None:
+    version = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     # Read and render everything before writing, so a missing README fails clearly.
     pages = {
         competition: render_page(
-            (ROOT / competition / "README.md").read_text(encoding="utf-8"), competition
+            (ROOT / competition / "README.md").read_text(encoding="utf-8"), competition, version
         )
         for competition in COMPETITIONS
     }
+    home = re.sub(
+        r'href="styles\.css(?:\?v=[^" ]*)?"',
+        f'href="styles.css?v={version}"',
+        (ROOT / "index.html").read_text(encoding="utf-8"),
+    )
     output.mkdir(parents=True, exist_ok=True)
     if output.resolve() != ROOT:
-        for asset in ("index.html", "styles.css", "script.js"):
-            shutil.copy2(ROOT / asset, output / asset)
+        shutil.copy2(ROOT / "styles.css", output / "styles.css")
+    (output / "index.html").write_text(home, encoding="utf-8")
     for competition, page in pages.items():
         destination = output / competition / "index.html"
         destination.parent.mkdir(parents=True, exist_ok=True)

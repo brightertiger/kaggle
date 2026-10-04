@@ -1,81 +1,79 @@
 # Portfolio website
 
-The [live portfolio](https://brightertiger.github.io/kaggle/) is a static GitHub Pages
-site. Each of the 20 solution cards links to a rendered README at
-`/kaggle/<competition>/` and to the corresponding code on GitHub. Five additional
-competition cards link only to Kaggle because they have no solution folder.
-Medal filters cover all 25 cards, including unranked entries under Other.
+The [live portfolio](https://brightertiger.github.io/kaggle/) is a static academic-style
+portfolio with 25 numbered competition entries grouped by Gold, Silver, Bronze, and
+Other. All entries link to their competition; 20 also link to a rendered solution
+README and the code on GitHub. The five entries without solution folders retain
+competition links only. AmExpert links to its original Analytics Vidhya competition.
+Medal navigation uses native anchors and works without JavaScript.
 
-## Files
+## Design and source files
 
-- `index.html`: portfolio cards, medal filters, and profile links.
-- `styles.css`: shared fonts, color variables, responsive layout, and write-up typography.
-- `script.js`: filtering and optional scroll animations.
-- `build_site.py`: shared HTML template and README renderer for the 20 competition folders.
-- `requirements-site.txt`: the Python Markdown dependency; the build otherwise uses the standard library.
-- `package.json`: optional local server commands and `npm run build`.
-- `.github/workflows/deploy.yml`: builds the write-ups and deploys the repository root.
+- `index.html`: all competition titles, ranks, team counts, descriptions, tags, links,
+  medal totals, and profile links.
+- `styles.css`: the only stylesheet, shared by the homepage and write-ups.
+- `script.js`: explanatory comments only; the homepage requires no script.
+- `build_site.py`: shared page template, README renderer, and stylesheet versioning.
+- `requirements-site.txt`: Python Markdown dependency.
+- `package.json`: optional local server and build commands.
+- `.github/workflows/deploy.yml`: builds write-ups and deploys the repository root.
+
+The design follows the author's personal website: system sans-serif body text,
+white background, `#242424` ink, `#4c4c4c` body text, `#707070` metadata,
+`#e8e8e8` rules, understated underlined links, and the same responsive reading width
+(`clamp(808px, 56vw, 1040px)`). Georgia headings give the competition list an academic
+feel. Spacing follows the reference's 8/12/16/24/32/36/40/52/64/72px rhythm.
+Mobile gutters are 16px. Like the reference, the site is light-only. No web fonts,
+frameworks, card effects, or animations are loaded.
 
 ## Build and validate locally
 
-Install the site dependency into your Python environment, then build outside the
+Install `requirements-site.txt` into your Python environment, then build outside the
 repository to leave competition folders untouched:
 
 ```bash
-python -m pip install -r requirements-site.txt
-python build_site.py --out /tmp/site_build_test
+.venv/bin/python build_site.py --out /tmp/site_overhaul_test
+python -m http.server 8000 --directory /tmp/site_overhaul_test
 ```
 
-In this workspace, the equivalent commands are:
-
-```bash
-UV_CACHE_DIR=/tmp/kaggle-site-uv-cache uv pip install --python .venv/bin/python -r requirements-site.txt
-.venv/bin/python build_site.py --out /tmp/site_build_test
-```
-
-The isolated output contains the homepage, shared CSS and JavaScript, and all 20
-`<competition>/index.html` pages. You can inspect the generated HTML without a server.
-The build preserves README-relative links and image paths; it does not copy competition
-source files or images to the isolated output. CI uploads the original competition
-folders alongside the generated pages, so existing relative assets retain their URLs.
-
-For an optional browser preview, serve the output with
-`python -m http.server 8000 --directory /tmp/site_build_test`.
+The isolated output contains the homepage, shared stylesheet, and all 20
+`<competition>/index.html` pages. Open the preview at `http://localhost:8000`.
+README-relative links and image paths are preserved. The isolated output does not
+copy competition source files or images. CI uploads the original competition folders
+alongside generated pages, so those assets retain their URLs in the deployed site.
 
 Running `python build_site.py` (or `npm run build`) without `--out` writes pages into
-the repository, as CI does. Those generated `*/index.html` files are gitignored;
-edit the source READMEs instead of generated pages. Missing READMEs fail the build.
+the repository, as CI does. Generated `*/index.html` files are gitignored and should
+not be committed. Missing READMEs fail the build before output is written.
 
-## Markdown support
+## Markdown and accessibility
 
-Write-ups support headings with anchor IDs, lists, links, images, fenced code, and
-Markdown tables. Fenced `mermaid` blocks become `<pre class="mermaid">` elements.
-Pages with diagrams load Mermaid 11 from jsDelivr as an ES module and initialize it
-with strict security settings. Diagram rendering needs JavaScript and CDN access;
-the diagram source remains readable without them. Google Fonts supplies Inter,
-with system fonts as a fallback.
+Write-ups share the author's header, profile links, and footer with the homepage,
+and include Back to portfolio and View code on GitHub links. Markdown supports
+heading anchors, lists, links, images, fenced code, blockquotes, and tables. Wide
+tables and code blocks scroll horizontally within the reading column. Tables have
+focusable, labeled scroll regions; code blocks are keyboard focusable. Both page
+types include skip links and visible keyboard focus outlines.
 
-The shared template loads `../styles.css`, links back to `../`, and adds a
-“View code on GitHub” footer pointing to
-`https://github.com/brightertiger/kaggle/tree/master/<competition>`.
+Fenced `mermaid` blocks become `<pre class="mermaid">` elements. Only pages with
+diagrams load Mermaid 11 from jsDelivr, with strict security and a neutral theme.
+Diagram rendering requires JavaScript and CDN access; the source remains readable
+without them. No other external scripts are needed.
 
-## Deployment
+## Deployment and cache busting
 
-On pushes to `main` or `master`, or a manual workflow dispatch, GitHub Actions:
+The existing GitHub Actions workflow builds the site on pushes to `main` or `master`,
+or on manual dispatch, then deploys the repository root to GitHub Pages.
 
-1. Checks out the repository and sets up Python 3.12.
-2. Installs `requirements-site.txt` and runs `python build_site.py`.
-3. Uploads the repository root as the Pages artifact.
-4. Deploys it to GitHub Pages.
+Every build creates one UTC timestamp and appends `?v=<timestamp>` to the stylesheet
+URL in all 20 write-ups and the output homepage. With `--out`, only the output copy
+of the homepage is rewritten; CI's default build rewrites the root homepage in its
+checkout. The source homepage also has a version suffix for direct local previews.
+This gives each deployment a new stylesheet URL so browsers request the new design.
 
-The homepage remains at `/kaggle/`, and write-ups live at `/kaggle/<competition>/`.
-No generated pages are committed. Changes to any competition README are rendered
-on the next deployment.
+## Updating entries
 
-## Updating the portfolio
-
-Edit root `index.html` for cards and keep its ranks and medal tiers aligned with
-root `README.md`. Use a local Write-up link and a GitHub Code link for each solution
-folder. Leave undocumented ranks off cards. Add new competition folders to
-`COMPETITIONS` in `build_site.py` and update the root competition tables as needed.
-All cards use the same classes, so the medal filters include new cards automatically.
+Edit root `index.html` to update entries. Preserve ranks, medals, descriptions, tags,
+and existing competition, Write-up, and Code destinations. Keep the numbered lists'
+`start` values and summary counts aligned when adding entries. Do not invent ranks
+or solution links for entries without recorded results or a solution folder.

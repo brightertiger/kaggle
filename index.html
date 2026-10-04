@@ -3,484 +3,497 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ujjwal Singh Rao - Kaggle Portfolio</title>
-    <link rel="stylesheet" href="styles.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet">
-    <script src="script.js" defer></script>
+    <meta name="description" content="Kaggle competition solutions and technical write-ups by Ujjwal Singh Rao, Kaggle Master. NLP, computer vision, medical imaging, and optimization.">
+    <title>Ujjwal Singh Rao — Kaggle Portfolio</title>
+    <link rel="stylesheet" href="styles.css?v=20261004-academic">
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
         <div class="container">
-            <div class="header-content">
+            <div>
                 <h1 class="name">Ujjwal Singh Rao</h1>
-                <p class="tagline">Kaggle Master | ML Engineer | Data Scientist</p>
-                <div class="links">
-                    <a href="https://www.kaggle.com/brightertiger" target="_blank">🏆 Kaggle</a>
-                    <a href="https://github.com/brightertiger" target="_blank">GitHub</a>
-                    <a href="https://linkedin.com/in/brightertiger" target="_blank">LinkedIn</a>
-                    <a href="https://brightertiger.xyz" target="_blank">Website</a>
-                </div>
+                <p class="tagline">Kaggle Master · ML Engineer · Data Scientist</p>
             </div>
+            <nav class="profile-links" aria-label="Profiles">
+                <a href="https://www.kaggle.com/brightertiger" target="_blank" rel="noopener noreferrer">Kaggle</a>
+                <a href="https://github.com/brightertiger" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://linkedin.com/in/brightertiger" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+                <a href="https://brightertiger.xyz" target="_blank" rel="noopener noreferrer">Website</a>
+            </nav>
         </div>
     </header>
-
-    <!-- Stats Section -->
-    <section class="about">
-        <div class="container">
-            <p class="about-text">
-                Kaggle Master with 3 Gold, 12 Silver, and 4 Bronze medals across 25 competitions, with 20 solution write-ups.
-                Expertise in NLP, Computer Vision, Medical Imaging, and Optimization.
-                Highest rank: #3 out of 1,621 teams (Jigsaw Multilingual).
-            </p>
-        </div>
-    </section>
-
-    <!-- Projects Section -->
-    <section class="projects">
-        <div class="container">
-            <h2>🏆 Competition Portfolio</h2>
-            <p class="projects-subtitle">3 Gold 🥇 | 12 Silver 🥈 | 4 Bronze 🥉</p>
-            
-            <div class="project-filters" role="group" aria-label="Filter competitions by medal" hidden>
-                <button type="button" data-filter="all" aria-pressed="true">All</button>
-                <button type="button" data-filter="gold" aria-pressed="false">Gold</button>
-                <button type="button" data-filter="silver" aria-pressed="false">Silver</button>
-                <button type="button" data-filter="bronze" aria-pressed="false">Bronze</button>
-                <button type="button" data-filter="other" aria-pressed="false">Other</button>
+    <main id="main" class="container">
+        <section class="summary" aria-labelledby="portfolio-heading">
+            <div class="section-head">
+                <h2 id="portfolio-heading">Competition portfolio</h2>
+                <span class="section-note">25 competitions · 20 write-ups</span>
             </div>
-            <p class="filter-status" role="status" aria-live="polite"></p>
-
-            <div class="projects-grid">
-                <!-- Gold Medal Projects -->
-                <div class="project-card gold">
-                    <div class="project-header">
+            <p>Kaggle Master with 3 Gold, 12 Silver, and 4 Bronze medals across 25 competitions, with 20 solution write-ups. Expertise in NLP, Computer Vision, Medical Imaging, and Optimization. Highest rank: #3 out of 1,621 teams (Jigsaw Multilingual).</p>
+            <p class="medal-summary">3 Gold · 12 Silver · 4 Bronze</p>
+            <nav class="medal-nav" aria-label="Competitions by medal">
+                <span>Browse by medal</span>
+                <a href="#gold">Gold</a>
+                <a href="#silver">Silver</a>
+                <a href="#bronze">Bronze</a>
+                <a href="#other">Other</a>
+            </nav>
+        </section>
+        <section class="medal-section" aria-labelledby="gold">
+            <div class="section-head">
+                <h2 id="gold">Gold</h2>
+                <span class="section-note">3 competitions</span>
+            </div>
+            <ol class="competition-list" start="1">
+                <li class="competition-entry">
+                    <article>
                         <h3>Jigsaw Multilingual Toxic Comment Classification</h3>
-                        <div class="medal">🥇 #3 / 1,621</div>
-                    </div>
-                    <p class="project-description">Top 0.2% finish. Multilingual toxicity detection using XLM-RoBERTa with TPU training and adversarial validation.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">TPU</span>
-                        <span class="tag">Multilingual</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="jigsawml/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/jigsawml">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card gold">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 3 of 1,621 teams · Gold medal</p>
+                        <p class="entry-description">Top 0.2% finish. Multilingual toxicity detection using XLM-RoBERTa with TPU training and adversarial validation.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>TPU</li>
+                            <li>Multilingual</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/jigsaw-multilingual-toxic-comment-classification">Competition</a>
+                            <a href="jigsawml/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/jigsawml">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>SIIM-ISIC Melanoma Classification</h3>
-                        <div class="medal">🥇 #6 / 3,308</div>
-                    </div>
-                    <p class="project-description">Top 0.2% finish. Melanoma detection using EfficientNet with metadata fusion and test-time augmentation.</p>
-                    <div class="project-tags">
-                        <span class="tag">Medical Imaging</span>
-                        <span class="tag">EfficientNet</span>
-                        <span class="tag">TTA</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="siim/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/siim">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card gold">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 6 of 3,308 teams · Gold medal</p>
+                        <p class="entry-description">Top 0.2% finish. Melanoma detection using EfficientNet with metadata fusion and test-time augmentation.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Medical Imaging</li>
+                            <li>EfficientNet</li>
+                            <li>TTA</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/siim-isic-melanoma-classification">Competition</a>
+                            <a href="siim/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/siim">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>TalkingData AdTracking Fraud Detection</h3>
-                        <div class="medal">🥇 #16 / 3,943</div>
-                    </div>
-                    <p class="project-description">Top 0.4% finish. Large-scale click fraud detection using LightGBM with advanced feature engineering on 200M+ rows.</p>
-                    <div class="project-tags">
-                        <span class="tag">Fraud Detection</span>
-                        <span class="tag">LightGBM</span>
-                        <span class="tag">Big Data</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="talking/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/talking">Code</a>
-                    </div>
-                </div>
-
-                <!-- Silver Medal Projects -->
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 16 of 3,943 teams · Gold medal</p>
+                        <p class="entry-description">Top 0.4% finish. Large-scale click fraud detection using LightGBM with advanced feature engineering on 200M+ rows.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Fraud Detection</li>
+                            <li>LightGBM</li>
+                            <li>Big Data</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/talkingdata-adtracking-fraud-detection">Competition</a>
+                            <a href="talking/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/talking">Code</a>
+                        </div>
+                    </article>
+                </li>
+            </ol>
+        </section>
+        <section class="medal-section" aria-labelledby="silver">
+            <div class="section-head">
+                <h2 id="silver">Silver</h2>
+                <span class="section-note">12 competitions</span>
+            </div>
+            <ol class="competition-list" start="4">
+                <li class="competition-entry">
+                    <article>
                         <h3>Avito Demand Prediction</h3>
-                        <div class="medal">🥈 #21 / 1,868</div>
-                    </div>
-                    <p class="project-description">Top 1.1% finish. Demand prediction combining NLP, image features, and tabular data with ensemble methods.</p>
-                    <div class="project-tags">
-                        <span class="tag">Multimodal</span>
-                        <span class="tag">Ensemble</span>
-                        <span class="tag">NLP</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="avito/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/avito">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 21 of 1,868 teams · Silver medal</p>
+                        <p class="entry-description">Top 1.1% finish. Demand prediction combining NLP, image features, and tabular data with ensemble methods.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Multimodal</li>
+                            <li>Ensemble</li>
+                            <li>NLP</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/avito-demand-prediction-challenge">Competition</a>
+                            <a href="avito/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/avito">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Google QUEST Q&amp;A Labeling</h3>
-                        <div class="medal">🥈 #21 / 1,571</div>
-                    </div>
-                    <p class="project-description">Top 1.3% finish. Q&amp;A quality prediction using BERT and RoBERTa with custom head architectures.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">BERT</span>
-                        <span class="tag">Q&amp;A</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="quest/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/quest">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 21 of 1,571 teams · Silver medal</p>
+                        <p class="entry-description">Top 1.3% finish. Q&amp;A quality prediction using BERT and RoBERTa with custom head architectures.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>BERT</li>
+                            <li>Q&amp;A</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/google-quest-challenge">Competition</a>
+                            <a href="quest/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/quest">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Instacart Market Basket Analysis</h3>
-                        <div class="medal">🥈 #22 / 2,621</div>
-                    </div>
-                    <p class="project-description">Top 0.8% finish. Product reorder prediction using gradient boosting with extensive feature engineering.</p>
-                    <div class="project-tags">
-                        <span class="tag">Recommendation</span>
-                        <span class="tag">XGBoost</span>
-                        <span class="tag">Features</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/instacart-market-basket-analysis" target="_blank">Competition</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 22 of 2,621 teams · Silver medal</p>
+                        <p class="entry-description">Top 0.8% finish. Product reorder prediction using gradient boosting with extensive feature engineering.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Recommendation</li>
+                            <li>XGBoost</li>
+                            <li>Features</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/instacart-market-basket-analysis">Competition</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Santa Gift Matching Challenge</h3>
-                        <div class="medal">🥈 #26 / 428</div>
-                    </div>
-                    <p class="project-description">Top 6% finish. Combinatorial optimization for gift matching using Hungarian algorithm and simulated annealing.</p>
-                    <div class="project-tags">
-                        <span class="tag">Optimization</span>
-                        <span class="tag">Algorithms</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/santa-gift-matching-challenge" target="_blank">Competition</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 26 of 428 teams · Silver medal</p>
+                        <p class="entry-description">Top 6% finish. Combinatorial optimization for gift matching using Hungarian algorithm and simulated annealing.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Optimization</li>
+                            <li>Algorithms</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/santa-gift-matching-challenge">Competition</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Toxic Comment Classification</h3>
-                        <div class="medal">🥈 #29 / 4,539</div>
-                    </div>
-                    <p class="project-description">Top 0.6% finish. Multi-label toxicity classification using bidirectional LSTM with attention and CNN ensemble.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">LSTM</span>
-                        <span class="tag">Attention</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="toxic/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/toxic">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 29 of 4,539 teams · Silver medal</p>
+                        <p class="entry-description">Top 0.6% finish. Multi-label toxicity classification using bidirectional LSTM with attention and CNN ensemble.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>LSTM</li>
+                            <li>Attention</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/jigsaw-toxic-comment-classification-challenge">Competition</a>
+                            <a href="toxic/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/toxic">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>SIIM-ACR Pneumothorax Segmentation</h3>
-                        <div class="medal">🥈 #32 / 1,475</div>
-                    </div>
-                    <p class="project-description">Top 2.2% finish. Chest X-ray segmentation using U-Net with EfficientNet encoder and deep supervision.</p>
-                    <div class="project-tags">
-                        <span class="tag">Medical Imaging</span>
-                        <span class="tag">Segmentation</span>
-                        <span class="tag">U-Net</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation" target="_blank">Competition</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 32 of 1,475 teams · Silver medal</p>
+                        <p class="entry-description">Top 2.2% finish. Chest X-ray segmentation using U-Net with EfficientNet encoder and deep supervision.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Medical Imaging</li>
+                            <li>Segmentation</li>
+                            <li>U-Net</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation">Competition</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Gendered Pronoun Resolution</h3>
-                        <div class="medal">🥈 #41 / 838</div>
-                    </div>
-                    <p class="project-description">Top 4.9% finish. Coreference resolution using BERT with span extraction and entity embeddings.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">BERT</span>
-                        <span class="tag">Coreference</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="pronoun/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/pronoun">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
-                        <h3>Santa's Workshop Tour 2019</h3>
-                        <div class="medal">🥈 #44 / 1,618</div>
-                    </div>
-                    <p class="project-description">Top 2.7% finish. Constraint satisfaction optimization using mixed integer programming and local search.</p>
-                    <div class="project-tags">
-                        <span class="tag">Optimization</span>
-                        <span class="tag">Constraints</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/santa-workshop-tour-2019" target="_blank">Competition</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 41 of 838 teams · Silver medal</p>
+                        <p class="entry-description">Top 4.9% finish. Coreference resolution using BERT with span extraction and entity embeddings.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>BERT</li>
+                            <li>Coreference</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/gendered-pronoun-resolution">Competition</a>
+                            <a href="pronoun/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/pronoun">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
+                        <h3>Santa&#x27;s Workshop Tour 2019</h3>
+                        <p class="entry-meta">Kaggle · rank 44 of 1,618 teams · Silver medal</p>
+                        <p class="entry-description">Top 2.7% finish. Constraint satisfaction optimization using mixed integer programming and local search.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Optimization</li>
+                            <li>Constraints</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/santa-workshop-tour-2019">Competition</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>RSNA Intracranial Hemorrhage Detection</h3>
-                        <div class="medal">🥈 #58 / 1,345</div>
-                    </div>
-                    <p class="project-description">Top 4.3% finish. CT scan hemorrhage detection using ResNeXt with windowing and sequence modeling.</p>
-                    <div class="project-tags">
-                        <span class="tag">Medical Imaging</span>
-                        <span class="tag">DICOM</span>
-                        <span class="tag">CNN</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="rsna/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/rsna">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 58 of 1,345 teams · Silver medal</p>
+                        <p class="entry-description">Top 4.3% finish. CT scan hemorrhage detection using ResNeXt with windowing and sequence modeling.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Medical Imaging</li>
+                            <li>DICOM</li>
+                            <li>CNN</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection">Competition</a>
+                            <a href="rsna/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/rsna">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>APTOS 2019 Blindness Detection</h3>
-                        <div class="medal">🥈 #75 / 2,928</div>
-                    </div>
-                    <p class="project-description">Top 2.6% finish. Diabetic retinopathy detection using EfficientNet with ordinal regression.</p>
-                    <div class="project-tags">
-                        <span class="tag">Medical Imaging</span>
-                        <span class="tag">EfficientNet</span>
-                        <span class="tag">Ordinal</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="aptos/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/aptos">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 75 of 2,928 teams · Silver medal</p>
+                        <p class="entry-description">Top 2.6% finish. Diabetic retinopathy detection using EfficientNet with ordinal regression.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Medical Imaging</li>
+                            <li>EfficientNet</li>
+                            <li>Ordinal</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/aptos2019-blindness-detection">Competition</a>
+                            <a href="aptos/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/aptos">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>CommonLit Readability Prize</h3>
-                        <div class="medal">🥈 #91 / 3,633</div>
-                    </div>
-                    <p class="project-description">Top 2.5% finish. Text complexity prediction using RoBERTa with regression head and pseudo-labeling.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">RoBERTa</span>
-                        <span class="tag">Regression</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="https://www.kaggle.com/competitions/commonlitreadabilityprize" target="_blank">Competition</a>
-                    </div>
-                </div>
-
-                <div class="project-card silver">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 91 of 3,633 teams · Silver medal</p>
+                        <p class="entry-description">Top 2.5% finish. Text complexity prediction using RoBERTa with regression head and pseudo-labeling.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>RoBERTa</li>
+                            <li>Regression</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/commonlitreadabilityprize">Competition</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Jigsaw Unintended Bias in Toxicity</h3>
-                        <div class="medal">🥈 #146 / 3,165</div>
-                    </div>
-                    <p class="project-description">Top 4.6% finish. Bias-aware toxicity detection using BERT with custom loss functions for fairness.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">BERT</span>
-                        <span class="tag">Fairness</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="jigsaw/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/jigsaw">Code</a>
-                    </div>
-                </div>
-
-                <!-- Bronze Medal Projects -->
-                <div class="project-card bronze">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 146 of 3,165 teams · Silver medal</p>
+                        <p class="entry-description">Top 4.6% finish. Bias-aware toxicity detection using BERT with custom loss functions for fairness.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>BERT</li>
+                            <li>Fairness</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification">Competition</a>
+                            <a href="jigsaw/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/jigsaw">Code</a>
+                        </div>
+                    </article>
+                </li>
+            </ol>
+        </section>
+        <section class="medal-section" aria-labelledby="bronze">
+            <div class="section-head">
+                <h2 id="bronze">Bronze</h2>
+                <span class="section-note">4 competitions</span>
+            </div>
+            <ol class="competition-list" start="16">
+                <li class="competition-entry">
+                    <article>
                         <h3>iMet Collection 2019 - FGVC6</h3>
-                        <div class="medal">🥉 #61 / 521</div>
-                    </div>
-                    <p class="project-description">Top 11.7% finish. Multi-label artwork classification using ResNeXt with focal loss.</p>
-                    <div class="project-tags">
-                        <span class="tag">Computer Vision</span>
-                        <span class="tag">Multi-label</span>
-                        <span class="tag">ResNeXt</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="imet/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/imet">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card bronze">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 61 of 521 teams · Bronze medal</p>
+                        <p class="entry-description">Top 11.7% finish. Multi-label artwork classification using ResNeXt with focal loss.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Computer Vision</li>
+                            <li>Multi-label</li>
+                            <li>ResNeXt</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/imet-2019-fgvc6">Competition</a>
+                            <a href="imet/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/imet">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Rainforest Connection Species Audio Detection</h3>
-                        <div class="medal">🥉 #78 / 1,143</div>
-                    </div>
-                    <p class="project-description">Top 6.8% finish. Species detection from audio using mel-spectrograms with EfficientNet.</p>
-                    <div class="project-tags">
-                        <span class="tag">Audio</span>
-                        <span class="tag">Spectrograms</span>
-                        <span class="tag">CNN</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="rfcx/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/rfcx">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card bronze">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 78 of 1,143 teams · Bronze medal</p>
+                        <p class="entry-description">Top 6.8% finish. Species detection from audio using mel-spectrograms with EfficientNet.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Audio</li>
+                            <li>Spectrograms</li>
+                            <li>CNN</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/rfcx-species-audio-detection">Competition</a>
+                            <a href="rfcx/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/rfcx">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Tweet Sentiment Extraction</h3>
-                        <div class="medal">🥉 #208 / 2,225</div>
-                    </div>
-                    <p class="project-description">Top 9.3% finish. Sentiment phrase extraction using RoBERTa with character-level span prediction.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">RoBERTa</span>
-                        <span class="tag">Extraction</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="tweet/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/tweet">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card bronze">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 208 of 2,225 teams · Bronze medal</p>
+                        <p class="entry-description">Top 9.3% finish. Sentiment phrase extraction using RoBERTa with character-level span prediction.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>RoBERTa</li>
+                            <li>Extraction</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/tweet-sentiment-extraction">Competition</a>
+                            <a href="tweet/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/tweet">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>TGS Salt Identification Challenge</h3>
-                        <div class="medal">🥉 #292 / 3,219</div>
-                    </div>
-                    <p class="project-description">Top 9.1% finish. Seismic image segmentation using U-Net with ResNet encoder and deep supervision.</p>
-                    <div class="project-tags">
-                        <span class="tag">Segmentation</span>
-                        <span class="tag">U-Net</span>
-                        <span class="tag">Geoscience</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="salt/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/salt">Code</a>
-                    </div>
-                </div>
-
-                <!-- Other Projects -->
-                <div class="project-card">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank 292 of 3,219 teams · Bronze medal</p>
+                        <p class="entry-description">Top 9.1% finish. Seismic image segmentation using U-Net with ResNet encoder and deep supervision.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Segmentation</li>
+                            <li>U-Net</li>
+                            <li>Geoscience</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/tgs-salt-identification-challenge">Competition</a>
+                            <a href="salt/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/salt">Code</a>
+                        </div>
+                    </article>
+                </li>
+            </ol>
+        </section>
+        <section class="medal-section" aria-labelledby="other">
+            <div class="section-head">
+                <h2 id="other">Other</h2>
+                <span class="section-note">6 competitions</span>
+            </div>
+            <ol class="competition-list" start="20">
+                <li class="competition-entry">
+                    <article>
                         <h3>AmExpert Coupon Redemption Prediction</h3>
-                    </div>
-                    <p class="project-description">Coupon redemption prediction using customer transaction features and rank-blended LightGBM models.</p>
-                    <div class="project-tags">
-                        <span class="tag">Tabular</span>
-                        <span class="tag">LightGBM</span>
-                        <span class="tag">Ensemble</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="amexpert/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/amexpert">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card">
-                    <div class="project-header">
+                        <p class="entry-meta">Analytics Vidhya · rank not recorded</p>
+                        <p class="entry-description">Coupon redemption prediction using customer transaction features and rank-blended LightGBM models.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Tabular</li>
+                            <li>LightGBM</li>
+                            <li>Ensemble</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.analyticsvidhya.com/datahack/contest/amexpert-2019-machine-learning-hackathon/">Competition</a>
+                            <a href="amexpert/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/amexpert">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Cassava Leaf Disease Classification</h3>
-                    </div>
-                    <p class="project-description">Leaf disease classification using EfficientNet-B4, stochastic weight averaging, and model blending.</p>
-                    <div class="project-tags">
-                        <span class="tag">Computer Vision</span>
-                        <span class="tag">EfficientNet</span>
-                        <span class="tag">SWA</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="leaf/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/leaf">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank not recorded</p>
+                        <p class="entry-description">Leaf disease classification using EfficientNet-B4, stochastic weight averaging, and model blending.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Computer Vision</li>
+                            <li>EfficientNet</li>
+                            <li>SWA</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/cassava-leaf-disease-classification">Competition</a>
+                            <a href="leaf/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/leaf">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Spooky Author Identification</h3>
-                    </div>
-                    <p class="project-description">Author identification combining text features, Naive Bayes, gradient boosting, and recurrent neural networks.</p>
-                    <div class="project-tags">
-                        <span class="tag">NLP</span>
-                        <span class="tag">XGBoost</span>
-                        <span class="tag">LSTM</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="spooky/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/spooky">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank not recorded</p>
+                        <p class="entry-description">Author identification combining text features, Naive Bayes, gradient boosting, and recurrent neural networks.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>NLP</li>
+                            <li>XGBoost</li>
+                            <li>LSTM</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/spooky-author-identification">Competition</a>
+                            <a href="spooky/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/spooky">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Statoil Iceberg Classifier Challenge</h3>
-                    </div>
-                    <p class="project-description">Iceberg and ship classification from radar images using CNNs, transfer learning, and stacking.</p>
-                    <div class="project-tags">
-                        <span class="tag">Computer Vision</span>
-                        <span class="tag">CNN</span>
-                        <span class="tag">Ensemble</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="statoil/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/statoil">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank not recorded</p>
+                        <p class="entry-description">Iceberg and ship classification from radar images using CNNs, transfer learning, and stacking.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Computer Vision</li>
+                            <li>CNN</li>
+                            <li>Ensemble</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/c/statoil-iceberg-classifier-challenge">Competition</a>
+                            <a href="statoil/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/statoil">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Whale Identification Challenge</h3>
-                    </div>
-                    <p class="project-description">Individual whale identification using ResNet50 embeddings, center loss, and Siamese similarity learning.</p>
-                    <div class="project-tags">
-                        <span class="tag">Computer Vision</span>
-                        <span class="tag">ResNet50</span>
-                        <span class="tag">Metric Learning</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="whale/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/whale">Code</a>
-                    </div>
-                </div>
-
-                <div class="project-card">
-                    <div class="project-header">
+                        <p class="entry-meta">Kaggle · rank not recorded</p>
+                        <p class="entry-description">Individual whale identification using ResNet50 embeddings, center loss, and Siamese similarity learning.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Computer Vision</li>
+                            <li>ResNet50</li>
+                            <li>Metric Learning</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/humpback-whale-identification">Competition</a>
+                            <a href="whale/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/whale">Code</a>
+                        </div>
+                    </article>
+                </li>
+                <li class="competition-entry">
+                    <article>
                         <h3>Quick, Draw! Doodle Recognition</h3>
-                        <div class="medal">📊 #138 / 1,309</div>
-                    </div>
-                    <p class="project-description">Sketch recognition using ResNet with stroke sequence augmentation and test-time augmentation.</p>
-                    <div class="project-tags">
-                        <span class="tag">Computer Vision</span>
-                        <span class="tag">Sketches</span>
-                        <span class="tag">ResNet</span>
-                    </div>
-                    <div class="project-links">
-                        <a href="doodle/">Write-up</a>
-                        <a href="https://github.com/brightertiger/kaggle/tree/master/doodle">Code</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="footer">
+                        <p class="entry-meta">Kaggle · rank 138 of 1,309 teams</p>
+                        <p class="entry-description">Sketch recognition using ResNet with stroke sequence augmentation and test-time augmentation.</p>
+                        <ul class="tech-tags" aria-label="Techniques">
+                            <li>Computer Vision</li>
+                            <li>Sketches</li>
+                            <li>ResNet</li>
+                        </ul>
+                        <div class="entry-links">
+                            <a href="https://www.kaggle.com/competitions/quickdraw-doodle-recognition">Competition</a>
+                            <a href="doodle/">Write-up</a>
+                            <a href="https://github.com/brightertiger/kaggle/tree/master/doodle">Code</a>
+                        </div>
+                    </article>
+                </li>
+            </ol>
+        </section>
+    </main>
+    <footer class="site-footer">
         <div class="container">
-            <div class="footer-links">
-                <a href="https://github.com/brightertiger" target="_blank">GitHub</a>
-                <a href="https://linkedin.com/in/brightertiger" target="_blank">LinkedIn</a>
-                <a href="https://brightertiger.xyz" target="_blank">Website</a>
-                <a href="https://kaggle.com/brightertiger" target="_blank">🏆 Kaggle</a>
-            </div>
+            <span>Ujjwal Singh Rao · Competition notes</span>
+            <nav class="profile-links" aria-label="More about the author">
+                <a href="https://github.com/brightertiger" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://linkedin.com/in/brightertiger" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+                <a href="https://brightertiger.xyz" target="_blank" rel="noopener noreferrer">Website</a>
+                <a href="https://kaggle.com/brightertiger" target="_blank" rel="noopener noreferrer">Kaggle</a>
+            </nav>
         </div>
     </footer>
 </body>
