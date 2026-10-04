@@ -35,15 +35,10 @@ This repository contains refactored and cleaned implementations of competition s
 |-------------|------|-------|------------------|----------|
 | [Avito Demand Prediction Challenge](https://www.kaggle.com/competitions/avito-demand-prediction-challenge) | **#21** | 1,868 | Ensemble, NLP, Image Features | [Folder](./avito/) · [Write-up](https://brightertiger.github.io/kaggle/avito/) |
 | [Google QUEST Q&A Labeling](https://www.kaggle.com/competitions/google-quest-challenge) | **#21** | 1,571 | BERT, RoBERTa, Question Answering | [Folder](./quest/) · [Write-up](https://brightertiger.github.io/kaggle/quest/) |
-| [Instacart Market Basket Analysis](https://www.kaggle.com/competitions/instacart-market-basket-analysis) | **#22** | 2,621 | Recommendation Systems, Feature Engineering | — |
-| [Santa Gift Matching Challenge](https://www.kaggle.com/competitions/santa-gift-matching-challenge) | **#26** | 428 | Optimization, Hungarian Algorithm | — |
 | [Toxic Comment Classification Challenge](https://www.kaggle.com/competitions/jigsaw-toxic-comment-classification-challenge) | **#29** | 4,539 | RNN, CNN, Attention, NLP | [Folder](./toxic/) · [Write-up](https://brightertiger.github.io/kaggle/toxic/) |
-| [SIIM-ACR Pneumothorax Segmentation](https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation) | **#32** | 1,475 | U-Net, Medical Imaging, Segmentation | — |
 | [Gendered Pronoun Resolution](https://www.kaggle.com/competitions/gendered-pronoun-resolution) | **#41** | 838 | BERT, Coreference Resolution | [Folder](./pronoun/) · [Write-up](https://brightertiger.github.io/kaggle/pronoun/) |
-| [Santa's Workshop Tour 2019](https://www.kaggle.com/competitions/santa-workshop-tour-2019) | **#44** | 1,618 | Optimization, Constraint Satisfaction | — |
 | [RSNA Intracranial Hemorrhage Detection](https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection) | **#58** | 1,345 | CNN, Medical Imaging, DICOM | [Folder](./rsna/) · [Write-up](https://brightertiger.github.io/kaggle/rsna/) |
 | [APTOS 2019 Blindness Detection](https://www.kaggle.com/competitions/aptos2019-blindness-detection) | **#75** | 2,928 | EfficientNet, Diabetic Retinopathy | [Folder](./aptos/) · [Write-up](https://brightertiger.github.io/kaggle/aptos/) |
-| [CommonLit Readability Prize](https://www.kaggle.com/competitions/commonlitreadabilityprize) | **#91** | 3,633 | RoBERTa, Text Regression | — |
 | [Jigsaw Unintended Bias in Toxicity Classification](https://www.kaggle.com/competitions/jigsaw-unintended-bias-in-toxicity-classification) | **#146** | 3,165 | BERT, Bias Mitigation, NLP | [Folder](./jigsaw/) · [Write-up](https://brightertiger.github.io/kaggle/jigsaw/) |
 
 ### 🥉 Bronze Medals
@@ -72,10 +67,10 @@ Ranks and team counts marked — are not documented. Competition-only entries ha
 
 | Metric | Value |
 |--------|-------|
-| **Total Competitions** | 25 |
+| **Total Competitions** | 20 |
 | **Solution Folders** | 20 |
 | **Gold Medals** | 3 🥇 |
-| **Silver Medals** | 12 🥈 |
+| **Silver Medals** | 7 🥈 |
 | **Bronze Medals** | 4 🥉 |
 | **Highest Rank** | #3 / 1,621 (Jigsaw Multilingual) |
 | **Documented Top 1% Finishes** | 4 |
